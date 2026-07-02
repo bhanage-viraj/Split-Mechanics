@@ -33,6 +33,16 @@ final class NetworkService: ObservableObject {
     /// button press). The UI observes this to show a "peer disconnected" prompt.
     @Published var peerDisconnected: Bool = false
 
+    // MARK: - Phase 4 Publishers
+
+    /// Emits raw ARKit collaboration payloads received from the peer. The Scanning
+    /// interactor feeds these straight into the local `ARSession`.
+    let collaborationDataPublisher = PassthroughSubject<Data, Never>()
+
+    /// Emits gameplay `NetworkEvent`s (e.g. `begin_seance`, `doll_touched`) as they
+    /// arrive, so interactors can react without polling `receivedMessages`.
+    let eventPublisher = PassthroughSubject<NetworkEvent, Never>()
+
     // MARK: - Private Properties
 
     private let serviceType = "_arcurse._tcp"
@@ -198,23 +208,48 @@ final class NetworkService: ObservableObject {
         }
     }
 
-    /// Frames and queues an event for sending (one send in flight at a time).
+    /// Sends a raw ARKit collaboration payload (already `NSKeyedArchiver`-encoded).
+    /// These share the connection with JSON events via a 1-byte "kind" tag.
+    ///
+    /// `.optional` (non-critical) data is high-frequency and droppable; if the send
+    /// queue is already backed up we skip it so `.critical` map data — which merges
+    /// the worlds — isn't delayed behind a backlog.
+    func sendCollaborationData(_ data: Data, critical: Bool) {
+        if !critical, pendingSends.count > 6 { return }
+        enqueue(kind: FrameKind.collaboration, payload: data)
+    }
+
+    /// Wire framing kinds. Prefixed to every frame so the receiver can route
+    /// binary collaboration blobs separately from JSON gameplay events.
+    private enum FrameKind {
+        static let event: UInt8 = 0
+        static let collaboration: UInt8 = 1
+    }
+
+    /// Encodes a `NetworkEvent` as JSON and queues it as an `event` frame.
     private func enqueue(_ event: NetworkEvent) {
+        do {
+            let payload = try JSONEncoder().encode(event)
+            enqueue(kind: FrameKind.event, payload: payload)
+        } catch {
+            self.statusMessage = "Send failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Frames and queues a payload for sending (one send in flight at a time).
+    /// Frame layout: `[kind: 1 byte][length: 4 bytes big-endian][payload]`.
+    private func enqueue(kind: UInt8, payload: Data) {
         guard let connection, connection.state == .ready else {
             self.statusMessage = "Cannot send — not connected."
             return
         }
 
-        do {
-            let payload = try JSONEncoder().encode(event)
-            var length = UInt32(payload.count).bigEndian
-            var framed = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
-            framed.append(payload)
-            pendingSends.append(framed)
-            flushSendQueue(on: connection)
-        } catch {
-            self.statusMessage = "Send failed: \(error.localizedDescription)"
-        }
+        var length = UInt32(payload.count).bigEndian
+        var framed = Data([kind])
+        framed.append(Data(bytes: &length, count: MemoryLayout<UInt32>.size))
+        framed.append(payload)
+        pendingSends.append(framed)
+        flushSendQueue(on: connection)
     }
 
     private func flushSendQueue(on connection: NWConnection) {
@@ -311,6 +346,14 @@ final class NetworkService: ObservableObject {
         listener.stateUpdateHandler = { [weak self] newState in
             Task { @MainActor in
                 guard let self else { return }
+                // Ignore callbacks from a listener we've already replaced or
+                // intentionally cancelled (after a guest connects, or on teardown).
+                // Otherwise a late `.cancelled` races the connection's `.ready` and
+                // can overwrite `.connected` with `.disconnected` → "Hosting cancelled".
+                guard self.listener === listener else {
+                    self.log("Ignoring stale listener callback: \(newState)")
+                    return
+                }
                 self.log("listener state → \(newState)")
                 switch newState {
                 case .ready:
@@ -360,6 +403,12 @@ final class NetworkService: ObservableObject {
         browser.stateUpdateHandler = { [weak self] newState in
             Task { @MainActor in
                 guard let self else { return }
+                // Ignore callbacks from a browser we've already replaced or
+                // cancelled (e.g. when we tapped a peer and moved to connecting).
+                guard self.browser === browser else {
+                    self.log("Ignoring stale browser callback: \(newState)")
+                    return
+                }
                 switch newState {
                 case .ready:
                     self.statusMessage = "Looking for hosts…"
@@ -367,10 +416,8 @@ final class NetworkService: ObservableObject {
                     self.statusMessage = "Browse failed: \(error.localizedDescription)"
                     self.state = .disconnected
                 case .cancelled:
-                    if !self.isConnecting && self.connection == nil {
-                        self.statusMessage = "Browsing cancelled."
-                        self.state = .disconnected
-                    }
+                    self.statusMessage = "Browsing cancelled."
+                    self.state = .disconnected
                 default:
                     break
                 }
@@ -380,6 +427,7 @@ final class NetworkService: ObservableObject {
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.browser === browser else { return }
                 self.discoveredPeers = Array(results)
                 if results.isEmpty {
                     self.statusMessage = "No hosts found."
@@ -394,6 +442,13 @@ final class NetworkService: ObservableObject {
         connection.stateUpdateHandler = { [weak self] newState in
             Task { @MainActor in
                 guard let self else { return }
+                // Ignore callbacks from a connection we've already replaced or torn
+                // down, so a stale `.cancelled`/`.failed` from a previous attempt
+                // can't abort a fresh connect during rapid reconnect cycles.
+                guard self.connection === connection else {
+                    self.log("Ignoring stale connection callback: \(newState)")
+                    return
+                }
                 self.log("connection state → \(newState)")
                 switch newState {
                 case .ready:
@@ -468,29 +523,37 @@ final class NetworkService: ObservableObject {
     private func processReceived(_ data: Data) {
         receiveBuffer.append(data)
 
-        let headerSize = MemoryLayout<UInt32>.size
+        // Header: [kind: 1 byte][length: 4 bytes big-endian]
+        let headerSize = 1 + MemoryLayout<UInt32>.size
 
         while receiveBuffer.count >= headerSize {
-            // Read the 4-byte big-endian length WITHOUT `load(as:)`, which requires
-            // 4-byte alignment and crashes on unaligned reads after the buffer has
-            // been sliced. Copying to a UInt8 array is alignment-safe.
+            // Read the header WITHOUT `load(as:)`, which requires 4-byte alignment
+            // and crashes on unaligned reads after the buffer has been sliced.
+            // Copying to a UInt8 array is alignment-safe.
             let header = [UInt8](receiveBuffer.prefix(headerSize))
+            let kind = header[0]
             let length =
-                (UInt32(header[0]) << 24) |
-                (UInt32(header[1]) << 16) |
-                (UInt32(header[2]) << 8) |
-                 UInt32(header[3])
+                (UInt32(header[1]) << 24) |
+                (UInt32(header[2]) << 16) |
+                (UInt32(header[3]) << 8) |
+                 UInt32(header[4])
             let frameSize = headerSize + Int(length)
 
-            guard length > 0, length <= 1_000_000, receiveBuffer.count >= frameSize else { break }
+            // Collaboration blobs can be a few MB during heavy world merging.
+            guard length > 0, length <= 20_000_000, receiveBuffer.count >= frameSize else { break }
 
-            // Extract the JSON body and rebuild the remaining buffer as a fresh
-            // `Data` (startIndex 0) so subsequent iterations use valid indices.
+            // Extract the body and rebuild the remaining buffer as a fresh `Data`
+            // (startIndex 0) so subsequent iterations use valid indices.
             let frame = [UInt8](receiveBuffer.prefix(frameSize))
-            let jsonData = Data(frame[headerSize..<frameSize])
+            let payload = Data(frame[headerSize..<frameSize])
             receiveBuffer = Data(receiveBuffer.dropFirst(frameSize))
 
-            guard let event = try? JSONDecoder().decode(NetworkEvent.self, from: jsonData) else {
+            if kind == FrameKind.collaboration {
+                collaborationDataPublisher.send(payload)
+                continue
+            }
+
+            guard let event = try? JSONDecoder().decode(NetworkEvent.self, from: payload) else {
                 log("Dropped unreadable frame (\(length) bytes)")
                 statusMessage = "Received unreadable data."
                 continue
@@ -506,6 +569,7 @@ final class NetworkService: ObservableObject {
                 handlePong(event)
             default:
                 receivedMessages.append(event)
+                eventPublisher.send(event)
                 statusMessage = "Received: \(event.eventType)"
             }
         }

@@ -66,6 +66,18 @@ final class RoomScanService: NSObject, ObservableObject {
         print("🗺️ [RoomScan] Session stopped — processing…")
     }
 
+    /// Fully releases the RoomPlan camera so a subsequent `ARSession` (the seance)
+    /// can take over. Call before tearing the service down. RoomPlan holds the
+    /// camera until its session is stopped, so we always force a stop here.
+    func teardown() {
+        isScanning = false
+        isProcessing = false
+        roomCaptureView.captureSession.stop()
+        roomCaptureView.captureSession.delegate = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+        print("🗺️ [RoomScan] Torn down — camera released")
+    }
+
     /// Persists the captured room coordinates to disk. Returns the stored room.
     @discardableResult
     func persist() -> ScannedRoom? {

@@ -25,6 +25,8 @@ struct NetworkEvent: Codable, Sendable {
         case testMessage
         case ping
         case pong
+        case beginSeance = "begin_seance"
+        case dollTouched = "doll_touched"
     }
 
     let eventType: String
@@ -36,6 +38,16 @@ struct NetworkEvent: Codable, Sendable {
 
     static func testMessage(_ message: String) -> NetworkEvent {
         NetworkEvent(eventType: EventType.testMessage.rawValue, payload: message)
+    }
+
+    /// Host → Guest: room scan finished, move both devices into the seance (Phase 4).
+    static func beginSeance() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.beginSeance.rawValue, payload: nil)
+    }
+
+    /// Either player → the other: the doll was touched, move both to Phase 5.
+    static func dollTouched() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.dollTouched.rawValue, payload: nil)
     }
 
     /// A latency probe. Payload encodes `"<sequence>|<sendTimeInterval>"` so the
