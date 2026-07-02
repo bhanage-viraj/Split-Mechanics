@@ -1,0 +1,82 @@
+{
+    "game_sounds": {
+        "doll_tap": {
+            "file": "doll_tap.wav",
+            "category": "ambience"
+        },
+        "footstep_light": {
+            "file": "footstep_light.wav",
+            "loop": false
+        },
+        "footstep_heavy": {
+            "file": "footstep_heavy.wav",
+            "loop": false
+        },
+        "wind_ambient": {
+            "file": "wind_ambient.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "rune_hum": {
+            "file": "rune_hum.wav",
+            "loop": true,
+            "spatial": true
+        },
+        "seal_assemble": {
+            "file": "seal_assemble.wav",
+            "loop": false
+        },
+        "frequency_match": {
+            "file": "frequency_match.wav",
+            "loop": false
+        },
+        "static_glow": {
+            "file": "static_glow.wav",
+            "loop": true,
+            "spatial": false,
+            "filter": "highpass"
+        },
+        "letter_reveal": {
+            "file": "letter_reveal.wav",
+            "loop": false
+        },
+        "puzzle_click": {
+            "file": "puzzle_click.wav",
+            "loop": false
+        },
+        "scary_whisper": {
+            "file": "scary_whisper.wav",
+            "loop": false,
+            "spatial": true
+        },
+        "breathing_ambient": {
+            "file": "breathing_ambient.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "static_noise": {
+            "file": "static_noise.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "beeping": {
+            "file": "beeping.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "door_creak": {
+            "file": "door_creak.wav",
+            "loop": false
+        },
+        "creaky_floor": {
+            "file": "creaky_floor.wav",
+            "loop": false
+        }
+    },
+    "audio_groups": {
+        "player_sounds": ["footstep_light", "footstep_heavy"],
+        "ambient_sounds": ["wind_ambient", "breathing_ambient"],
+        "puzzle_sounds": ["rune_hum", "puzzle_click", "beeping"],
+        "horror_sounds": ["scary_whisper", "door_creak", "creaky_floor", "static_glow"]
+    }
+}
