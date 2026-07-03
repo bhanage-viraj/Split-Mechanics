@@ -18,6 +18,13 @@ enum NetworkRole: String, Codable, Sendable {
     case guest
 }
 
+/// Asymmetrical gameplay role assigned after the doll is touched (Phase 6).
+enum PlayerRole: String, Codable, Sendable, Equatable {
+    case seer
+    case listener
+    case unassigned
+}
+
 /// A single event exchanged between Host and Guest over the network connection.
 struct NetworkEvent: Codable, Sendable {
     enum EventType: String, Codable, Sendable {
@@ -27,6 +34,7 @@ struct NetworkEvent: Codable, Sendable {
         case pong
         case beginSeance = "begin_seance"
         case dollTouched = "doll_touched"
+        case roleAssignment = "role_assignment"
     }
 
     let eventType: String
@@ -48,6 +56,13 @@ struct NetworkEvent: Codable, Sendable {
     /// Either player → the other: the doll was touched, move both to Phase 5.
     static func dollTouched() -> NetworkEvent {
         NetworkEvent(eventType: EventType.dollTouched.rawValue, payload: nil)
+    }
+
+    /// Host → Guest: declares who is the Seer. Payload is `"host_is_seer"` or
+    /// `"host_is_listener"` so the Guest can take the opposite role.
+    static func roleAssignment(hostIsSeer: Bool) -> NetworkEvent {
+        let payload = hostIsSeer ? "host_is_seer" : "host_is_listener"
+        return NetworkEvent(eventType: EventType.roleAssignment.rawValue, payload: payload)
     }
 
     /// A latency probe. Payload encodes `"<sequence>|<sendTimeInterval>"` so the

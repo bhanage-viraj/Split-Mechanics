@@ -19,6 +19,7 @@ final class SeanceInteractor {
 
     private var cancellables = Set<AnyCancellable>()
     private var didRouteToPhase5 = false
+    private var keepsARSessionAlive = false
 
     init(arService: ARService, networkService: NetworkService) {
         self.arService = arService
@@ -29,6 +30,11 @@ final class SeanceInteractor {
         self.router = router
     }
 
+    /// Keeps the collaborative AR session running when handing off to Gameplay.
+    func prepareForGameplayHandoff() {
+        keepsARSessionAlive = true
+    }
+
     // MARK: - Start
 
     func start() {
@@ -37,7 +43,9 @@ final class SeanceInteractor {
     }
 
     func stop() {
-        arService.stop()
+        if !keepsARSessionAlive {
+            arService.stop()
+        }
         cancellables.removeAll()
     }
 

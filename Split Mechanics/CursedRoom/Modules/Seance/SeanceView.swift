@@ -76,18 +76,3 @@ struct SeanceView: View {
         .padding(.bottom, 12)
     }
 }
-
-// MARK: - Phase 5 placeholder
-
-struct Phase5PlaceholderView: View {
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            Text("The Curse Has Begun")
-                .font(.largeTitle.bold())
-                .foregroundStyle(.red)
-                .multilineTextAlignment(.center)
-                .padding()
-        }
-    }
-}

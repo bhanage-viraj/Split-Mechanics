@@ -18,7 +18,7 @@ final class AppCoordinator: ObservableObject {
         case lobby
         case scanning     // Phase 3 — Host scans with RoomPlan, Guest waits
         case seance       // Phase 4 — shared AR, worlds merge, doll appears
-        case phase5       // Phase 5 — "The Curse Has Begun"
+        case gameplay     // Phase 6 — role assignment & investigation
     }
 
     @Published var currentScreen: Screen = .lobby
@@ -44,6 +44,18 @@ final class AppCoordinator: ObservableObject {
     private lazy var seancePresenter: SeancePresenter = {
         let presenter = SeancePresenter(interactor: seanceInteractor)
         seanceInteractor.setRouter(seanceRouter)
+        return presenter
+    }()
+
+    // MARK: - Gameplay VIPER (Phase 6 — role assignment & UI impairment)
+    private lazy var gameplayRouter = GameplayRouter()
+    private lazy var gameplayInteractor = GameplayInteractor(
+        arService: arService,
+        networkService: networkService
+    )
+    private lazy var gameplayPresenter: GameplayPresenter = {
+        let presenter = GameplayPresenter(interactor: gameplayInteractor)
+        gameplayInteractor.setRouter(gameplayRouter)
         return presenter
     }()
 
@@ -136,14 +148,16 @@ final class AppCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - Seance → Phase 5 (doll touched by either player)
+    // MARK: - Seance → Gameplay (doll touched by either player)
 
     private func bindSeanceNavigation() {
         seanceRouter.$shouldShowPhase5
             .removeDuplicates()
             .filter { $0 }
             .sink { [weak self] _ in
-                self?.transition(to: .phase5)
+                guard let self else { return }
+                self.seanceInteractor.prepareForGameplayHandoff()
+                self.transition(to: .gameplay)
             }
             .store(in: &cancellables)
     }
@@ -165,8 +179,8 @@ final class AppCoordinator: ObservableObject {
         case .seance:
             // Both devices run the collaborative AR view.
             SeanceView(presenter: seancePresenter)
-        case .phase5:
-            Phase5PlaceholderView()
+        case .gameplay:
+            GameplayView(presenter: gameplayPresenter)
         }
     }
 

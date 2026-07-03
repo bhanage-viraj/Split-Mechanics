@@ -21,6 +21,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		6CE40C692FF7594A00EDA1DE /* Master Promt */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Master Promt";
+			sourceTree = "<group>";
+		};
 		6CECCC222FF5259100D61F76 /* Split Mechanics */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -47,6 +52,7 @@
 			children = (
 				6CECCC222FF5259100D61F76 /* Split Mechanics */,
 				6CECCC212FF5259100D61F76 /* Products */,
+				6CE40C692FF7594A00EDA1DE /* Master Promt */,
 			);
 			sourceTree = "<group>";
 		};
@@ -74,6 +80,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				6CE40C692FF7594A00EDA1DE /* Master Promt */,
 				6CECCC222FF5259100D61F76 /* Split Mechanics */,
 			);
 			name = "Split Mechanics";

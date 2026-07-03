@@ -62,6 +62,8 @@ final class ARService: NSObject, ObservableObject {
 
     private static let dollAnchorName = "cursed_doll_anchor"
     private static let dollEntityName = "cursed_doll_entity"
+    private static let dollModelName = "Hitem3d-1783040308176"
+    private static let dollTargetHeight: Float = 0.45
 
     // MARK: - Init
 
@@ -200,19 +202,67 @@ final class ARService: NSObject, ObservableObject {
 
     private func spawnDollEntity(on anchor: ARAnchor) {
         guard !isDollSpawned else { return }
+        isDollSpawned = true
 
         let anchorEntity = AnchorEntity(anchor: anchor)
-        anchorEntity.addChild(makeDoll())
         arView.scene.addAnchor(anchorEntity)
+        statusMessage = "Summoning the doll…"
 
-        isDollSpawned = true
-        statusMessage = "The doll has appeared. Tap it."
-        print("🕯️ [AR] Doll entity rendered")
+        Task { @MainActor in
+            let doll = await loadDoll()
+            anchorEntity.addChild(doll)
+            statusMessage = "The doll has appeared. Tap it."
+            print("🕯️ [AR] Doll entity rendered")
+        }
+    }
+
+    private func dollModelURL() -> URL? {
+        let bundle = Bundle.main
+        return bundle.url(
+            forResource: Self.dollModelName,
+            withExtension: "usdz",
+            subdirectory: "Models"
+        ) ?? bundle.url(forResource: Self.dollModelName, withExtension: "usdz")
+    }
+
+    /// Loads the scanned doll USDZ from the app bundle, falling back to a purple
+    /// placeholder if the asset is missing or fails to decode.
+    private func loadDoll() async -> Entity {
+        guard let url = dollModelURL() else {
+            print("🕯️ [AR] Doll USDZ not found in bundle — using placeholder")
+            return makePlaceholderDoll()
+        }
+
+        do {
+            let model = try await Entity(contentsOf: url)
+            return configureLoadedDoll(model)
+        } catch {
+            print("🕯️ [AR] Failed to load doll USDZ: \(error.localizedDescription)")
+            return makePlaceholderDoll()
+        }
+    }
+
+    private func configureLoadedDoll(_ model: Entity) -> Entity {
+        let container = Entity()
+        container.name = Self.dollEntityName
+
+        let bounds = model.visualBounds(relativeTo: nil)
+        if bounds.extents.y > 0 {
+            let scale = Self.dollTargetHeight / bounds.extents.y
+            model.scale = simd_float3(repeating: scale)
+        }
+        let scaledBounds = model.visualBounds(relativeTo: nil)
+        model.position.y = -scaledBounds.min.y
+
+        container.addChild(model)
+        container.generateCollisionShapes(recursive: true)
+        container.components.set(InputTargetComponent())
+        return container
     }
 
     /// Purple placeholder doll (body + head). Tappable via collision + input target.
-    private func makeDoll() -> ModelEntity {
-        let bodyHeight: Float = 0.45
+    private func makePlaceholderDoll() -> ModelEntity {
+        let bodyHeight = Self.dollTargetHeight
         let material = SimpleMaterial(color: .purple, roughness: 0.4, isMetallic: false)
 
         let body = ModelEntity(

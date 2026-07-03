@@ -208,6 +208,13 @@ final class NetworkService: ObservableObject {
         }
     }
 
+    /// Returns the most recent received event of a given type, if any.
+    /// Useful when a VIPER interactor starts after the peer already sent a
+    /// one-shot sync message (e.g. Phase 6 role assignment).
+    func latestEvent(ofType type: NetworkEvent.EventType) -> NetworkEvent? {
+        receivedMessages.last { $0.eventType == type.rawValue }
+    }
+
     /// Sends a raw ARKit collaboration payload (already `NSKeyedArchiver`-encoded).
     /// These share the connection with JSON events via a 1-byte "kind" tag.
     ///
