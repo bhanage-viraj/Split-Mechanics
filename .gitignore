@@ -1,0 +1,16 @@
+# Python
+tools/venv/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# Xcode user-specific
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Large 3D assets (keep locally; exceeds GitHub 100 MB limit)
+Split Mechanics/Models/Hitem3d-1783040308176.usdz
