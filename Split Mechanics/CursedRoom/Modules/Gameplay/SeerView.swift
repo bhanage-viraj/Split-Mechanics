@@ -2,32 +2,23 @@
 //  SeerView.swift
 //  The Cursed Room
 //
-//  Phase 6A — clean AR feed with a role prompt for the Seer.
+//  Phase 6A — clean AR feed with a one-time dismissible role popup.
 //
 
 import SwiftUI
 
 struct SeerView: View {
-    var body: some View {
-        VStack {
-            roleBanner
-            Spacer()
-        }
-        .padding()
-    }
+    @State private var showRolePopup = true
 
-    private var roleBanner: some View {
-        Text("You are the Seer. You can see the hidden world, but you cannot hear it.")
-            .font(.headline)
-            .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
-            .padding(.vertical, 14)
-            .padding(.horizontal, 20)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(.black.opacity(0.55))
-            )
-            .padding(.top, 8)
+    var body: some View {
+        ZStack {
+            if showRolePopup {
+                RoleRevealPopup(
+                    roleTitle: "You are the Seer",
+                    roleDescription: "You can see the hidden world, but you cannot hear it.",
+                    onDismiss: { withAnimation(.easeOut(duration: 0.25)) { showRolePopup = false } }
+                )
+            }
+        }
     }
 }

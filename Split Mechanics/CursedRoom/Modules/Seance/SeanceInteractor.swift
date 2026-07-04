@@ -74,27 +74,28 @@ final class SeanceInteractor {
             }
             .store(in: &cancellables)
 
-        // Local tap on the doll → tell the peer, then advance ourselves.
+        // Local tap on the doll → tell the peer, vanish the doll, then advance.
         arService.dollTapped
             .sink { [weak self] in
                 guard let self else { return }
                 self.networkService.send(.dollTouched())
-                self.advanceToPhase5()
+                self.activateCurse()
             }
             .store(in: &cancellables)
 
-        // Peer tapped the doll → advance ourselves.
+        // Peer tapped the doll → vanish the doll and advance ourselves.
         networkService.eventPublisher
             .filter { $0.eventType == NetworkEvent.EventType.dollTouched.rawValue }
             .sink { [weak self] _ in
-                self?.advanceToPhase5()
+                self?.activateCurse()
             }
             .store(in: &cancellables)
     }
 
-    private func advanceToPhase5() {
+    private func activateCurse() {
         guard !didRouteToPhase5 else { return }
         didRouteToPhase5 = true
+        arService.removeDoll()
         router?.routeToPhase5()
     }
 }

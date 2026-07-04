@@ -18,6 +18,7 @@ final class AppCoordinator: ObservableObject {
         case lobby
         case scanning     // Phase 3 — Host scans with RoomPlan, Guest waits
         case seance       // Phase 4 — shared AR, worlds merge, doll appears
+        case curseBegins  // Phase 5 — black transition after the doll is touched
         case gameplay     // Phase 6 — role assignment & investigation
     }
 
@@ -157,7 +158,7 @@ final class AppCoordinator: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.seanceInteractor.prepareForGameplayHandoff()
-                self.transition(to: .gameplay)
+                self.transition(to: .curseBegins)
             }
             .store(in: &cancellables)
     }
@@ -179,6 +180,10 @@ final class AppCoordinator: ObservableObject {
         case .seance:
             // Both devices run the collaborative AR view.
             SeanceView(presenter: seancePresenter)
+        case .curseBegins:
+            CurseBeginsView { [self] in
+                transition(to: .gameplay)
+            }
         case .gameplay:
             GameplayView(presenter: gameplayPresenter)
         }

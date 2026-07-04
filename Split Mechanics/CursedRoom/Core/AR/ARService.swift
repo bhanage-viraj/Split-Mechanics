@@ -55,6 +55,7 @@ final class ARService: NSObject, ObservableObject {
     private var isHost = false
     private var wantsDoll = false          // Host requested a spawn (post-merge)
     private var dollAnchorAdded = false    // Host has added the ARAnchor once
+    private var dollAnchorEntity: AnchorEntity?
     private var hasStarted = false
 
     private var floorPlanes: [UUID: ARPlaneAnchor] = [:]
@@ -198,6 +199,28 @@ final class ARService: NSObject, ObservableObject {
         return SpatialMath.translation(spot)
     }
 
+    /// Removes the shared doll from the scene when the curse is activated.
+    func removeDoll() {
+        guard isDollSpawned || dollAnchorEntity != nil || dollAnchorAdded else { return }
+
+        if let anchorEntity = dollAnchorEntity {
+            arView.scene.removeAnchor(anchorEntity)
+            dollAnchorEntity = nil
+        }
+
+        if isHost, dollAnchorAdded {
+            for anchor in arView.session.currentFrame?.anchors ?? [] where anchor.name == Self.dollAnchorName {
+                arView.session.remove(anchor: anchor)
+            }
+            dollAnchorAdded = false
+        }
+
+        wantsDoll = false
+        isDollSpawned = false
+        statusMessage = "The curse has taken hold…"
+        print("🕯️ [AR] Doll removed — curse activated")
+    }
+
     // MARK: - Doll Rendering (both devices)
 
     private func spawnDollEntity(on anchor: ARAnchor) {
@@ -205,6 +228,7 @@ final class ARService: NSObject, ObservableObject {
         isDollSpawned = true
 
         let anchorEntity = AnchorEntity(anchor: anchor)
+        dollAnchorEntity = anchorEntity
         arView.scene.addAnchor(anchorEntity)
         statusMessage = "Summoning the doll…"
 

@@ -17,8 +17,7 @@ struct GameplayView: View {
 
     var body: some View {
         ZStack {
-            arCameraLayer
-
+            backgroundLayer
             roleOverlay
         }
         .onAppear { presenter.onAppear() }
@@ -27,10 +26,17 @@ struct GameplayView: View {
 
     // MARK: - Layers
 
-    private var arCameraLayer: some View {
-        ARViewContainer(arView: presenter.arView)
-            .blur(radius: presenter.viewModel.playerRole == .listener ? 20 : 0)
-            .ignoresSafeArea()
+    /// Phase 6A is role assignment only — no AR feed and no doll. The camera
+    /// returns once both devices know Seer vs Listener.
+    @ViewBuilder
+    private var backgroundLayer: some View {
+        if presenter.viewModel.isRoleResolved {
+            ARViewContainer(arView: presenter.arView)
+                .blur(radius: presenter.viewModel.playerRole == .listener ? 20 : 0)
+                .ignoresSafeArea()
+        } else {
+            Color.black.ignoresSafeArea()
+        }
     }
 
     @ViewBuilder
@@ -50,9 +56,7 @@ struct GameplayView: View {
     }
 
     private var assigningOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.65).ignoresSafeArea()
-            VStack(spacing: 16) {
+        VStack(spacing: 16) {
                 ProgressView()
                     .tint(.white)
                     .scaleEffect(1.3)
@@ -62,6 +66,6 @@ struct GameplayView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

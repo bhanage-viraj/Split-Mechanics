@@ -15,7 +15,7 @@ protocol SeanceRouterProtocol: AnyObject {
 
 @MainActor
 final class SeanceRouter: ObservableObject, SeanceRouterProtocol {
-    /// Observed by the AppCoordinator to present `Phase5PlaceholderView`.
+    /// Observed by the AppCoordinator to present the curse-begins transition.
     @Published var shouldShowPhase5: Bool = false
 
     func routeToPhase5() {
