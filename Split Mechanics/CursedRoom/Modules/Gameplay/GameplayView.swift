@@ -20,14 +20,17 @@ struct GameplayView: View {
             backgroundLayer
             roleOverlay
         }
-        .onAppear { presenter.onAppear() }
+        .sheet(isPresented: $presenter.showLetterSheet) {
+            LetterSheetView()
+        }
+        .onAppear {
+            presenter.onAppear()
+        }
         .onDisappear { presenter.onDisappear() }
     }
 
     // MARK: - Layers
 
-    /// Phase 6A is role assignment only — no AR feed and no doll. The camera
-    /// returns once both devices know Seer vs Listener.
     @ViewBuilder
     private var backgroundLayer: some View {
         if presenter.viewModel.isRoleResolved {
@@ -52,6 +55,24 @@ struct GameplayView: View {
             case .unassigned:
                 assigningOverlay
             }
+
+            if presenter.viewModel.isRoleResolved && !presenter.isLetterSpawned {
+                huntStatusBanner
+            }
+        }
+    }
+
+    private var huntStatusBanner: some View {
+        VStack {
+            Spacer()
+            Text(presenter.huntStatusMessage)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.85))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(.black.opacity(0.6)))
+                .padding(.bottom, 28)
         }
     }
 
@@ -67,5 +88,35 @@ struct GameplayView: View {
                     .padding(.horizontal, 32)
             }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Letter Sheet
+
+struct LetterSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("📜 Hidden Letter")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+
+                Text("Hello")
+                    .font(.title)
+                    .foregroundColor(.gray)
+
+                Spacer()
+            }
+            .navigationTitle("Clue")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }

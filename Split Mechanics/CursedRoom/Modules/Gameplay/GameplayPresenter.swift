@@ -18,11 +18,15 @@ final class GameplayPresenter: ObservableObject {
     }
 
     @Published private(set) var viewModel: ViewModel
+    @Published var showLetterSheet = false
 
     private let interactor: GameplayInteractor
-    private var cancellables = Set<AnyCancellable>()
+    var cancellables = Set<AnyCancellable>()
 
     var arView: ARView { interactor.arService.arView }
+    var interactorRef: GameplayInteractor { interactor }
+    var huntStatusMessage: String { interactor.arService.statusMessage }
+    var isLetterSpawned: Bool { interactor.arService.isLetterSpawned }
 
     init(interactor: GameplayInteractor) {
         self.interactor = interactor
@@ -38,6 +42,20 @@ final class GameplayPresenter: ObservableObject {
                     playerRole: role,
                     isRoleResolved: role != .unassigned
                 )
+            }
+            .store(in: &cancellables)
+
+        interactor.arService.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        interactor.arService.letterTapped
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.showLetterSheet = true
             }
             .store(in: &cancellables)
     }

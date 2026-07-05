@@ -71,6 +71,11 @@
         "creaky_floor": {
             "file": "creaky_floor.wav",
             "loop": false
+        },
+        "letter_whisper": {
+            "file": "BGM.mp3",
+            "loop": true,
+            "spatial": true
         }
     },
     "audio_groups": {
