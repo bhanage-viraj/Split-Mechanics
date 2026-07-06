@@ -1,34 +1,44 @@
 # The Cursed Room
+### A Technical Design Document, Told as a Story
 
-### Technical Design Document
-
-> **Version 1.1** · iOS 18+ · Swift 6 · VIPER + SwiftUI  
+> **Version 1.1** · iOS 18+ · Swift 6 · VIPER + SwiftUI
 > Two iPhones. One curse. Split senses. Shared room.
+
+---
+
+## Prologue: The Doll on the Rug
+
+Two players stand in the same living room. Same couch, same coffee table, same walls they've stared at a thousand times. They raise their phones. On screen, sitting on the real rug, is a doll that wasn't there a second ago.
+
+They reach out together and tap it.
+
+The curse activates — and their senses are torn apart. One goes deaf and gains sight beyond sight: hidden footprints, glowing locks, messages burned into real walls. The other goes blind and gains impossible hearing: whispers from empty corners, a heartbeat that quickens as danger nears.
+
+They are standing shoulder to shoulder in the same physical room, living in two different nightmares, and the only way out is to trust each other's voice.
+
+This document is the engineering behind that nightmare — how two iPhones agree on one haunted room, why one of them can see the dead and the other can only hear them, and what happens when the network hiccups in the middle of a jump-scare.
 
 ---
 
 ## Table of Contents
 
-1. [Vision & Player Experience](#1-vision--player-experience)
-2. [System Architecture](#2-system-architecture)
-3. [Device Connection & World Sync](#3-device-connection--world-sync)
-4. [Core Engineering](#4-core-engineering)
-5. [Data Model](#5-data-model)
-6. [Project Structure](#6-project-structure)
-7. [Security & App Store](#7-security--app-store)
-8. [Risks & Mitigations](#8-risks--mitigations)
+1. [The Two Realities](#1-the-two-realities)
+2. [How the House Is Built](#2-how-the-house-is-built)
+3. [The Handshake — Two Phones Agreeing on One Ghost](#3-the-handshake--two-phones-agreeing-on-one-ghost)
+4. [The Machinery Behind the Curse](#4-the-machinery-behind-the-curse)
+5. [The Bones of the Curse — Data Model](#5-the-bones-of-the-curse--data-model)
+6. [The Vault — Project Structure](#6-the-vault--project-structure)
+7. [Keeping the Curse Contained — Security & App Store](#7-keeping-the-curse-contained--security--app-store)
+8. [What Could Go Wrong in the Dark](#8-what-could-go-wrong-in-the-dark)
+9. [The Toolbox](#9-the-toolbox)
 
 ---
 
-## 1. Vision & Player Experience
+## 1. The Two Realities
 
-**The Cursed Room** is an asymmetrical, local-multiplayer AR horror game. Two players in the same physical room cooperate over Wi-Fi — but they no longer share the same senses. One sees what the other cannot. One hears what the other cannot. They must communicate out loud to survive.
+Before any curse can split a player's senses, something has to build the room they're standing in — accurately, in real-world coordinates, down to the centimeter. That job needs LiDAR. Not every iPhone has it. So the game turns that hardware gap into the plot itself.
 
-After a cursed doll is touched, senses split at random. The **Seer** perceives hidden supernatural objects in AR but hears only static. The **Listener** navigates by spatial sound and haptic pulses, their screen blurred and darkened. Together they hunt seal fragments, solve puzzles, and escape before the monster awakens.
-
-### Hardware Roles
-
-The game deliberately exploits a hardware split rather than requiring identical devices.
+One phone becomes the **Host** — it has LiDAR, and it draws the map. The other becomes the **Guest** — it has an ordinary camera, and it moves into the map the Host built.
 
 | | Host | Guest |
 | :--- | :--- | :--- |
@@ -37,56 +47,48 @@ The game deliberately exploits a hardware split rather than requiring identical 
 | **Responsibilities** | Room scan, world authority, spawn decisions | World merge, sensory gameplay |
 | **Exclusive capabilities** | RoomPlan scan, scene mesh reconstruction | — |
 
-> The Host builds a metrically accurate room model. The Guest merges into that coordinate space through ARKit collaborative sessions, exchanging map data over a local TCP connection.
+The Host builds a metrically accurate model of the actual living room. The Guest doesn't scan anything — it joins the Host's coordinate space through ARKit's collaborative session, quietly trading map data over a local connection until both phones agree, to the centimeter, where the doll is sitting.
 
-### Gameplay Journey
+### The Night, Beat by Beat
 
-| Beat | Summary |
-| :--- | :--- |
-| **The Setup** | Story intro → Host scans the room → both enter shared AR → touch the doll → curse activates, senses split |
-| **Seal #1 — Asymmetrical Investigation** | Roles revealed → Listener hears spatial cues, Seer sees hidden clues → first letter found → main mission revealed |
-| **Seal #2 — Split Investigation** | Listener deciphers whispers for a code → Seer follows AR footprints to a locked mechanism → first seal piece collected |
-| **Seal #3 — Frequency Puzzle** | Seer finds a hidden frequency → Listener tunes a scanner to match → second seal piece revealed |
-| **Ritual & Escape** | Haptics guide both to the ritual site → Seer restores the seal → curse broken → countdown escape to a safe zone |
+```mermaid
+flowchart LR
+    A["🏚️ The Setup<br/>Room scan → shared AR → doll touched"] --> B["👁️👂 Senses Split<br/>Roles assigned at random"]
+    B --> C["📜 Seal #1<br/>Asymmetrical Investigation"]
+    C --> D["🔒 Seal #2<br/>Split Investigation"]
+    D --> E["📡 Seal #3<br/>Frequency Puzzle"]
+    E --> F["🕯️ Ritual & Escape<br/>Countdown to safe zone"]
 
-### Beat-by-Beat Design
+    style A fill:#2b2b2b,color:#eee
+    style B fill:#4a1e1e,color:#eee
+    style C fill:#2b2b2b,color:#eee
+    style D fill:#2b2b2b,color:#eee
+    style E fill:#2b2b2b,color:#eee
+    style F fill:#1e2b1e,color:#eee
+```
 
-#### The Setup
+**The Setup.** Both players connect over Wi-Fi. The Host scans the room while the Guest waits. A doll materializes at the center of the floor. Both players touch it. The curse takes hold, and roles are assigned at random.
 
-Both players connect over local Wi-Fi. The Host scans the real room with LiDAR; the Guest waits, then both enter a shared AR space. A doll appears at the center of the floor. When both touch it, the curse activates — senses split at random into Seer and Listener.
-
-#### Seal #1 — Asymmetrical Investigation
-
-After roles are assigned, the first hidden objective appears: **The Letter**, anchored to a wall at eye level. The Listener is guided by spatial audio and haptic pulses toward it; the Seer follows and reveals it visually on arrival.
-
-When the Seer comes within 1.0 m of the letter, a mission overlay appears:
+**Seal #1 — Asymmetrical Investigation.** The first hidden object appears: a letter, anchored to a wall. The Listener is pulled toward it by sound and touch; the Seer arrives and reveals it visually. When the Seer gets within a meter, the mission is spoken aloud for the first time:
 
 > *"To break the curse, you must find the two pieces of the ancient seal. Only when the seal is restored will the monster lose its power."*
 
-Tapping **Next** syncs both players forward into the next beat.
-
-| Role | Letter experience |
+| Role | What the Letter feels like |
 | :--- | :--- |
-| **Seer** | White AR plane on wall; audio muted |
-| **Listener** | Invisible entity; spatial audio + distance haptics |
+| **Seer** | A pale plane glowing on the wall; total silence |
+| **Listener** | Nothing visible — just spatial audio and haptic pulses closing in |
 
-#### Seal #2 — Split Investigation
+**Seal #2 — Split Investigation.** The Seer alone sees bloody footprints leading to a locked mechanism. The Listener, still blind, hears whispers that sharpen into a code as they walk closer. Neither piece of information is useful alone — the code lives in one player's ears, the lock in the other's eyes.
 
-The Seer alone sees a trail of bloody footprints leading from the room center to a 3D lock mechanism on a wall. The Listener's screen stays blinded. Meanwhile, the Listener hears distant whispers — moving closer makes words clearer, revealing a code the Seer needs to unlock the mechanism and collect the first seal piece.
-
-#### Seal #3 — Frequency Puzzle
-
-The Seer discovers a hidden number in AR that corresponds to an acoustic frequency. The Listener opens a **Frequency Scanner** — a SwiftUI dial that crossfades from white noise to a clear clue track as they approach the target. Signal clarity scales with accuracy:
+**Seal #3 — Frequency Puzzle.** The Seer finds a number in the environment — a frequency. The Listener opens a tuning dial that fades from white noise into a clear signal as they approach the right value:
 
 $$C = \max\left(0,\ 1 - \frac{|F_p - F_t|}{\text{HearingRange}}\right)$$
 
-When the Listener locks the frequency, the Seer hears a mechanism activate and collects the second seal piece.
+Lock the frequency, and the Seer hears the mechanism click open on their end.
 
-#### Ritual & Escape
+**Ritual & Escape.** Haptics intensify as both players are pulled back to the ritual site. The Seer sets both seal pieces on the pedestal. Senses restore all at once — and a countdown begins as a safe zone glows on the real floor.
 
-Haptic feedback intensifies as both players return to the ritual site. The Seer places both seal pieces on a pedestal; senses restore. A countdown begins — a safe zone appears on the floor and both must reach it together before the monster catches them.
-
-### Sensory Split at a Glance
+### The Split at a Glance
 
 | Sense | Seer | Listener |
 | :--- | :--- | :--- |
@@ -97,20 +99,21 @@ Haptic feedback intensifies as both players return to the ritual site. The Seer 
 
 ---
 
-## 2. System Architecture
+## 2. How the House Is Built
 
-The app is structured as **VIPER modules** wired together by a single `AppCoordinator`. Complex AR and network state never leak into SwiftUI views — they live in two long-lived service singletons injected at the composition root.
+Under the horror, this is a disciplined VIPER app. Every screen — Lobby, Scanning, Seance, Gameplay — is its own self-contained module, and two long-lived services sit quietly underneath all of them, holding the state that's too heavy or too persistent to belong to any one screen.
 
-### Architectural Story
-
-```
-Player taps UI  →  Presenter formats state  →  View renders
-                        ↕
-                   Interactor decides
-                        ↕
-              ARService / NetworkService
-                        ↕
-              ARKit · RealityKit · Network.framework
+```mermaid
+flowchart LR
+    subgraph loop["The Loop of Every Interaction"]
+        direction LR
+        V["👆 View<br/>renders, listens for taps"] --> P["📋 Presenter<br/>formats what's shown"]
+        P --> I["🧠 Interactor<br/>decides what's true"]
+        I --> S["⚙️ Services<br/>ARKit · Network"]
+        S -.->|events flow back up| I
+        I -.-> P
+        P -.-> V
+    end
 ```
 
 | Layer | Job | Never does |
@@ -121,57 +124,55 @@ Player taps UI  →  Presenter formats state  →  View renders
 | **Entity** | Pure data (`NetworkEvent`, `PlayerRole`) | Side effects |
 | **Router** | Trigger screen transitions | Hold game state |
 
-### Persistent Services
+Two services sit beneath every screen, outliving any single module:
 
 | Service | Owns | Lives from |
 | :--- | :--- | :--- |
 | `NetworkService` | Bonjour discovery, TCP connection, event bus | App launch |
-| `ARService` | Collaborative `ARView`, entity spawning, spatial audio | Seance screen onward |
+| `ARService` | Collaborative `ARView`, entity spawning, letter spatial audio (`playAudio`) | Seance screen onward |
 
-`AppCoordinator` drives navigation: `lobby → scanning → seance → curseBegins → gameplay`.
+An `AppCoordinator` walks the player through the night: `lobby → scanning → seance → curseBegins → gameplay`.
 
-### Design Principles
+### The Rules the House Never Breaks
 
 | Principle | What it means |
 | :--- | :--- |
 | **Host authority** | Random seeds, spawn coordinates, and puzzle answers are computed once on the Host and replicated to the Guest |
-| **Sensory separation** | Audio and visuals are gated per-entity by `PlayerRole` — not just UI filters |
+| **Sensory separation** | Audio and visuals are gated per-entity by `PlayerRole` in `ARService` — Seer gets visuals only, Listener gets a spatial audio emitter only |
 | **Single TCP pipe** | JSON gameplay events and binary AR blobs share one connection, distinguished by a 1-byte frame header |
 | **No MultipeerConnectivity** | All transport uses `Network.framework` with Bonjour service `_arcurse._tcp` |
 
-### Layer Ownership
-
-Every feature in the game respects strict VIPER boundaries.
+### Who Owns What
 
 | Concern | Owner | Never in |
 | :--- | :--- | :--- |
 | Proximity / distance checks | `GameplayInteractor` | View, Presenter, `ARService` |
 | 60 fps proximity loops | `GameplayInteractor` | View |
 | Network event parse & dispatch | `GameplayInteractor` | View |
-| Entity spawn & role-gated visibility | `ARService` | Interactor, View |
+| Entity spawn, role-gated visibility & letter audio | `ARService` | Interactor, View |
 | Overlay text, buttons, sliders | `GameplayView` | Interactor |
 | `@Published` view state | `GameplayPresenter` | Interactor |
 
-### Architecture Diagram
+### The Full Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Player["Player-Facing"]
+    subgraph Player["🎮 Player-Facing"]
         VIEW["SwiftUI Views<br/>SeerView · ListenerView"]
     end
 
-    subgraph VIPER["VIPER Modules"]
+    subgraph VIPER["🧩 VIPER Modules"]
         PRES["Presenter"]
         INTER["Interactor"]
         ROUTE["Router"]
     end
 
-    subgraph Core["Shared Core"]
+    subgraph Core["🔧 Shared Core"]
         AR["ARService"]
         NET["NetworkService"]
     end
 
-    subgraph Apple["Apple Frameworks"]
+    subgraph Apple["🍎 Apple Frameworks"]
         ARKIT["ARKit"]
         RK["RealityKit"]
         NW["Network.framework"]
@@ -198,11 +199,27 @@ flowchart TB
 
 ---
 
-## 3. Device Connection & World Sync
+## 3. The Handshake — Two Phones Agreeing on One Ghost
 
-Connection follows a strict handshake: discover the Host over Bonjour, open TCP, scan the room, then merge AR worlds before any gameplay entities appear.
+Before the first jump-scare, two phones that have never met have to agree on a shared reality: find each other, connect, scan the room, and merge their separate understandings of space into one — all before a single ghost is allowed to appear. Skip a step, and the doll spawns in a different spot on each screen.
 
-### Connection Sequence
+```mermaid
+flowchart TD
+    A["📡 Host advertises via Bonjour"] --> B["🔍 Guest discovers Host"]
+    B --> C["🔗 TCP connection opens"]
+    C --> D["🏠 Host scans room with LiDAR"]
+    D --> E["🌐 Both start collaborative AR sessions"]
+    E --> F{"Worlds merged?"}
+    F -- "not yet, keep syncing" --> E
+    F -- "yes" --> G["👻 Host spawns the doll anchor"]
+    G --> H["📲 Guest renders synced doll"]
+    H --> I["👆 Both players tap the doll"]
+    I --> J["💀 Curse activates, roles assigned"]
+
+    style J fill:#4a1e1e,color:#eee
+```
+
+### The Full Sequence
 
 ```mermaid
 sequenceDiagram
@@ -250,9 +267,9 @@ sequenceDiagram
     TCP->>GNet: both enter Gameplay
 ```
 
-### Wire Protocol
+### The Wire Protocol
 
-Every TCP message uses a fixed header so the receiver can route JSON events separately from AR binary blobs.
+Every message on the wire carries a small header so the receiver knows, before parsing anything, whether it's holding a gameplay event or a chunk of ARKit's collaboration data.
 
 | Byte(s) | Field | Values |
 | :--- | :--- | :--- |
@@ -265,7 +282,17 @@ Every TCP message uses a fixed header so the receiver can route JSON events sepa
 | `0` | `role_assignment`, `letter_spawn`, `doll_touched`, etc. | Always delivered |
 | `1` | `ARSession.CollaborationData` | Non-critical frames dropped when send queue exceeds 6 |
 
-### Screen Progression
+### The Screens, in Order
+
+```mermaid
+stateDiagram-v2
+    [*] --> Lobby
+    Lobby --> Scanning: TCP connected
+    Scanning --> Seance: begin_seance received
+    Seance --> CurseBegins: doll_touched received
+    CurseBegins --> Gameplay: curse animation complete
+    Gameplay --> [*]
+```
 
 | Screen | Trigger | Both devices? |
 | :--- | :--- | :--- |
@@ -277,13 +304,11 @@ Every TCP message uses a fixed header so the receiver can route JSON events sepa
 
 ---
 
-## 4. Core Engineering
+## 4. The Machinery Behind the Curse
 
-### 4.1 World Merging
+### 4.1 Merging Two Worlds Into One
 
-**Problem:** Two different tracking systems must render the same entity at the same real-world position.
-
-**Solution pipeline:**
+Two different tracking systems have to agree the same doll is sitting in the same spot on the same rug. Here's how that agreement happens, step by step:
 
 | Step | Actor | Action |
 | :--- | :--- | :--- |
@@ -295,15 +320,21 @@ Every TCP message uses a fixed header so the receiver can route JSON events sepa
 | 6 | Guest | Receives anchor via collaboration; renders local RealityKit content |
 | 7 | Host | Sends `letter_spawn` transform as network fallback |
 
-The Host also enables LiDAR scene mesh with collision and occlusion so spatial audio can respect wall geometry.
+The Host also builds a LiDAR scene mesh with collision and occlusion, so spatial audio can respect the actual walls of the room — a whisper shouldn't leak cleanly through drywall.
 
-### 4.2 Predetermination Math
+### 4.2 The Curse Rolls Its Own Dice
 
-All randomness is **Host-computed and Guest-replicated** to prevent desync.
+Nothing about the haunting is left to chance on two separate devices — every random decision is made once, on the Host, and handed to the Guest as fact. Two players can never see two different curses.
 
-#### Marble Bag — Frequency Puzzle
+**Drawing a frequency without repeats:**
 
-Distinct acoustic frequencies are drawn from a finite pool without replacement, ensuring variety across play sessions.
+```mermaid
+flowchart LR
+    A["🎱 Pool of frequencies<br/>220, 277, 330 … 698 Hz"] --> B["🎲 Host draws random index"]
+    B --> C["✂️ Remove from pool"]
+    C --> D["📤 Target frequency sent to Guest"]
+    D --> E["🔁 Available for next session"]
+```
 
 | Concept | Behavior |
 | :--- | :--- |
@@ -311,11 +342,11 @@ Distinct acoustic frequencies are drawn from a finite pool without replacement, 
 | Draw | Random index into remaining values; remove on use |
 | Sync | Target frequency travels inside `GameStateSeed` (planned) |
 
-**Listener forgiveness** when tuning the scanner:
+The Listener's forgiveness curve while tuning the scanner:
 
 $$C = \max\left(0,\ 1 - \frac{|F_p - F_t|}{\text{HearingRange}}\right)$$
 
-#### Bounded Randomness — 3D Spawning
+**Deciding where the ghosts stand:**
 
 | Technique | Used for | Rule |
 | :--- | :--- | :--- |
@@ -324,24 +355,53 @@ $$C = \max\left(0,\ 1 - \frac{|F_p - F_t|}{\text{HearingRange}}\right)$$
 | **Rejection sampling** | Doll floor placement | Up to 40 attempts; reject points within 0.4 m of obstacles |
 | **Y-axis clamping** | All wall clues | Fixed at 1.4 m above lowest tracked floor |
 
-### 4.3 Sensory Engine
+### 4.3 The Sensory Engine
 
-Asymmetry is enforced at the **entity level**, not just the UI layer.
+The split isn't a filter slapped over the camera feed — it's baked into every entity in the world. A ghost that's invisible to the Listener isn't hidden by a UI trick; it was never rendered for them in the first place.
 
-#### Spatial Audio (RealityKit)
+**Spatial audio (Phase 6B — letter clue):**
+
+Letter audio is owned entirely by `ARService` via RealityKit — not manual gain math in the Interactor. `GameplayInteractor` only runs the 60 fps haptic loop for the Listener; it does not drive letter playback.
+
+```mermaid
+flowchart LR
+    A["🎵 BGM.mp3<br/>bundle: Sounds/"] --> B["AudioFileResource<br/>shouldLoop: true"]
+    B --> C["entity.playAudio()<br/>Listener-only child entity"]
+    C --> D["SpatialAudioComponent<br/>3D pan + rolloff"]
+    D --> E["👂 Listener hears<br/>world-anchored whisper"]
+    F["🔊 GameAudioSession<br/>AppDelegate launch"] -.-> C
+```
+
+| Layer | Owner | Role |
+| :--- | :--- | :--- |
+| Session activation | `GameAudioSession` | `.playback` category on app launch — speaker ready before AR |
+| Asset load | `ARService` | `Bundle.main.url(forResource: "BGM", subdirectory: "Sounds")` |
+| Playback | `ARService` | `AudioFileResource` + `entity.playAudio()` on invisible listener entity |
+| 3D rendering | RealityKit | `SpatialAudioComponent` handles panning and distance attenuation automatically |
+| Proximity haptics | `GameplayInteractor` | `CADisplayLink` → distance → `LetterProximityHaptics` (audio-independent) |
+| Doppler / custom DSP | `LetterAudioEngine` | **Not wired in** — reserved for future pitch-shift layer on top of RealityKit |
 
 | Parameter | Seer | Listener |
 | :--- | :--- | :--- |
-| Letter visibility | White `ModelEntity` plane | Invisible — audio emitter only |
-| `SpatialAudioComponent` gain | −60 dB (muted) | +20 dB (room-wide) |
-| Distance attenuation | `.rolloff(factor: 15.0)` | `.rolloff(factor: 15.0)` |
+| Letter visibility | White `ModelEntity` plane | No visual — invisible audio emitter only |
+| Audio entity | **None** (no `playAudio`, no `SpatialAudioComponent`) | Child `Entity` with `SpatialAudioComponent` |
+| `SpatialAudioComponent` gain | — | `Audio.Decibel(-3)` (near nominal; `Audio.Decibel` is a `Double` alias) |
+| Distance attenuation | — | `.rolloff(factor: 1.0)` — RealityKit inverse-distance curve |
 | Tap interaction | Enabled | Disabled |
 
-The Listener hunts by ear. The Seer hunts by sight. Neither can solo the objective.
+**Sync note:** On Guest startup, `GameplayInteractor` replays a missed `letter_spawn` via `latestEvent(ofType:)` (same pattern as `role_assignment`) so the letter anchor and audio entity appear even if the Host placed the clue during the curse transition screen.
 
-#### Haptic Proximity (CoreHaptics)
+The Listener hunts by ear. The Seer hunts by sight. Neither can finish the hunt alone.
 
-The Listener receives a continuous haptic pulse whose intensity scales with distance to the hidden letter, updated at 60 fps.
+**Haptic proximity** — a continuous pulse toward the hidden letter, refreshed 60 times a second:
+
+```mermaid
+flowchart LR
+    A["📏 Distance to letter"] --> B{"How close?"}
+    B -- "≤ 0.2 m" --> C["💥 Intensity 1.0<br/>sharp, urgent"]
+    B -- "≥ 3.0 m" --> D["🔇 Intensity 0.0<br/>silent"]
+    B -- "in between" --> E["📉 Linear falloff<br/>soft rumble → sharp pulse"]
+```
 
 | Distance | Intensity |
 | :--- | :--- |
@@ -349,9 +409,9 @@ The Listener receives a continuous haptic pulse whose intensity scales with dist
 | ≥ 3.0 m | 0.0 (silent) |
 | Between | Linear falloff |
 
-Sharpness co-scales with intensity so distant rumble feels soft and proximity feels sharp.
+Sharpness co-scales with intensity, so distant rumble feels soft and proximity feels sharp under the fingers.
 
-#### Visual Impairment (Listener UI)
+**Visual impairment for the Listener:**
 
 | Effect | Implementation |
 | :--- | :--- |
@@ -361,11 +421,9 @@ Sharpness co-scales with intensity so distant rumble feels soft and proximity fe
 
 ---
 
-## 5. Data Model
+## 5. The Bones of the Curse — Data Model
 
-Core entities group into three domains: **network transport**, **AR state**, and **gameplay identity**.
-
-### Entity Class Diagram
+Strip away the ghosts and the whispers, and what's left is three families of plain data: things that travel over the network, things that describe the AR world, and things that describe who a player is right now.
 
 ```mermaid
 classDiagram
@@ -426,8 +484,6 @@ classDiagram
     ARService ..> ScannedRoom : spawn constraints
 ```
 
-### Entity Reference
-
 | Entity | Owner | Transport | Purpose |
 | :--- | :--- | :--- | :--- |
 | `NetworkEvent` | `NetworkService` | TCP JSON | Lightweight RPCs between devices |
@@ -437,7 +493,7 @@ classDiagram
 | `GameStateSeed` | Host (planned) | Single sync event | All puzzle variables for a session |
 | `ScannedRoom` | `RoomScanService` | Local only | Pre-AR geometry from RoomPlan |
 
-### Network Events
+### Every Whisper Has a Name
 
 | Event | Direction | When fired |
 | :--- | :--- | :--- |
@@ -452,7 +508,9 @@ classDiagram
 
 ---
 
-## 6. Project Structure
+## 6. The Vault — Project Structure
+
+Everything above lives somewhere specific in the repo. No AR call happens in a View, no UI string lives in the Interactor — the folder structure enforces the same boundaries as the architecture itself.
 
 ```
 Split Mechanics/
@@ -466,7 +524,7 @@ Split Mechanics/
         ├── Core/
         │   ├── AR/                 ARService, RealityKit entities
         │   ├── Network/            NetworkService, NetworkModels
-        │   ├── Audio/              GameAudioSession, haptics, PHASE (planned)
+        │   ├── Audio/              GameAudioSession, LetterProximityHaptics, LetterAudioEngine (unused)
         │   ├── Math/               RandomnessMath, SpatialMath
         │   └── Room/               RoomScanService, ScannedRoom
         ├── Modules/                VIPER feature modules
@@ -476,7 +534,7 @@ Split Mechanics/
         │   └── Gameplay/           Roles, letter hunt, Seer/Listener views
         ├── UIComponents/           Shared overlays and transitions
         └── Resources/
-            ├── Sounds/             sounds.json manifest, BGM.mp3
+            ├── Sounds/             sounds.json manifest (letter_whisper → BGM.mp3), BGM.mp3
             └── Models/             Doll USDZ
 ```
 
@@ -490,7 +548,9 @@ Split Mechanics/
 
 ---
 
-## 7. Security & App Store
+## 7. Keeping the Curse Contained — Security & App Store
+
+Nothing about the curse leaves the living room. Every byte stays device-to-device, over the same Wi-Fi network the players are already standing under.
 
 ### Required Privacy Keys
 
@@ -513,7 +573,19 @@ Split Mechanics/
 
 ---
 
-## 8. Risks & Mitigations
+## 8. What Could Go Wrong in the Dark
+
+Every haunted house has weak floorboards. Here's where this one might creak, and what's already in place to keep it from collapsing mid-scare.
+
+```mermaid
+flowchart TD
+    A["⚠️ Guest VIO drifts vertically"] -->|mitigated by| A1["Host-authoritative transform<br/>+ Y-clamp + haptic fallback"]
+    B["⚠️ Blank wall won't relocalize"] -->|mitigated by| B1["Scan benchmark rejects<br/>featureless walls"]
+    C["⚠️ Audio bleeds through walls"] -->|mitigated by| C1["LiDAR mesh collision<br/>+ future PHASE occlusion"]
+    D["⚠️ AR collaboration backlog"] -->|mitigated by| D1["Drop optional frames<br/>when queue > 6"]
+    E["⚠️ Black camera after scan"] -->|mitigated by| E1["Release RoomPlan before AR<br/>+ 0.6s Host delay"]
+    F["⚠️ Role / letter_spawn race"] -->|mitigated by| F1["latestEvent(ofType:)<br/>replays missed sync"]
+```
 
 | Risk | Severity | Mitigation |
 | :--- | :---: | :--- |
@@ -522,30 +594,32 @@ Split Mechanics/
 | Audio bleeding through walls | Medium | LiDAR mesh collision; future PHASE occlusion |
 | Collaboration backlog | Medium | Drop optional AR frames when queue > 6 |
 | Black camera after scan | Medium | Release RoomPlan before AR; 0.6 s Host startup delay |
-| Role assignment race | Medium | `latestEvent(ofType:)` replays missed sync on Guest |
+| Role / `letter_spawn` race | Medium | `latestEvent(ofType:)` replays missed `role_assignment` and `letter_spawn` on Guest |
 | State desync on puzzles | Medium | `GameStateSeed` host authority (planned) |
 | Audio direction confusion | Medium | Camera-bound listener; haptic breadcrumbs |
 | Peer disconnect | Low | `peerDisconnected` flag → return to lobby |
-| Missing audio asset | Low | Async load with graceful fallback logging |
+| Missing audio asset | Low | `ARService` async `AudioFileResource` load; logs `Letter audio not found in bundle` and skips playback |
 
 ---
 
-## Technology Stack
+## 9. The Toolbox
 
 | Framework | Role in this project |
 | :--- | :--- |
 | **Swift 6 + SwiftUI** | Language and UI |
 | **ARKit** | World tracking, collaboration, plane detection |
-| **RealityKit** | 3D entities, `SpatialAudioComponent` |
+| **RealityKit** | 3D entities, `SpatialAudioComponent`, `AudioFileResource`, `entity.playAudio()` |
 | **RoomPlan** | Host room scanning (LiDAR) |
 | **Network.framework** | TCP + Bonjour (`NWListener`, `NWBrowser`, `NWConnection`) |
 | **CoreHaptics** | Listener proximity feedback |
 | **Combine** | Reactive wiring between VIPER and services |
-| **PHASE** | Planned — advanced spatial audio occlusion |
+| **AVFoundation** | `GameAudioSession` playback category; `LetterAudioEngine` (Doppler stub, not in live path) |
+| **PHASE** | Planned — advanced spatial audio occlusion beyond RealityKit mesh collision |
 
 ---
 
 <p align="center">
   <strong>The Cursed Room</strong><br/>
-  <em>VIPER · ARKit Collaboration · Network.framework</em>
+  <em>VIPER · ARKit Collaboration · Network.framework</em><br/>
+  <em>Two phones. One curse. Trust the voice next to you.</em>
 </p>

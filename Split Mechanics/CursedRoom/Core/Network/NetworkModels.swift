@@ -37,6 +37,8 @@ struct NetworkEvent: Codable, Sendable {
         case dollTouched = "doll_touched"
         case roleAssignment = "role_assignment"
         case letterSpawn = "letter_spawn"
+        case clueCode = "clue_code"
+        case sealCollected = "seal_collected"
     }
 
     let eventType: String
@@ -71,6 +73,16 @@ struct NetworkEvent: Codable, Sendable {
     static func letterSpawn(transform: simd_float4x4) -> NetworkEvent {
         let payload = LetterSpawnPayload.encode(transform)
         return NetworkEvent(eventType: EventType.letterSpawn.rawValue, payload: payload)
+    }
+
+    /// Host → Guest: 3-digit clue code for the blood pool puzzle (Phase 7A).
+    static func clueCode(code: String) -> NetworkEvent {
+        return NetworkEvent(eventType: EventType.clueCode.rawValue, payload: code)
+    }
+
+    /// Either player → the other: first seal collected, update UI state (Phase 7C).
+    static func sealCollected(sealNumber: Int) -> NetworkEvent {
+        return NetworkEvent(eventType: EventType.sealCollected.rawValue, payload: "\(sealNumber)")
     }
 
     /// A latency probe. Payload encodes `"<sequence>|<sendTimeInterval>"` so the

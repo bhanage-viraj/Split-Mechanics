@@ -20,6 +20,13 @@ final class GameplayPresenter: ObservableObject {
     @Published private(set) var viewModel: ViewModel
     @Published var showLetterSheet = false
 
+    // Phase 7C — code keypad overlay
+    @Published var showCodeKeypad = false
+    @Published var keypadErrorMessage: String?
+
+    // Seal progress
+    @Published private(set) var sealsCollected: Int = 0
+
     private let interactor: GameplayInteractor
     var cancellables = Set<AnyCancellable>()
 
@@ -58,6 +65,29 @@ final class GameplayPresenter: ObservableObject {
                 self?.showLetterSheet = true
             }
             .store(in: &cancellables)
+
+        // Phase 7 — keypad
+        interactor.$showCodeKeypad
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] show in
+                self?.showCodeKeypad = show
+                if show { self?.keypadErrorMessage = nil }
+            }
+            .store(in: &cancellables)
+
+        interactor.$keypadErrorMessage
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] msg in
+                self?.keypadErrorMessage = msg
+            }
+            .store(in: &cancellables)
+
+        interactor.$sealsCollected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] count in
+                self?.sealsCollected = count
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Intents
@@ -68,5 +98,15 @@ final class GameplayPresenter: ObservableObject {
 
     func onDisappear() {
         interactor.stop()
+    }
+
+    /// Submit the code entered by the Seer.
+    func submitCode(_ code: String) {
+        interactor.submitCode(code)
+    }
+
+    /// Trigger the blood trail phase (called after the letter is dismissed).
+    func beginBloodTrailPhase() {
+        interactor.beginBloodTrailPhase()
     }
 }

@@ -19,6 +19,7 @@ struct GameplayView: View {
         ZStack {
             backgroundLayer
             roleOverlay
+            codeKeypadOverlay
         }
         .sheet(isPresented: $presenter.showLetterSheet) {
             LetterSheetView()
@@ -73,6 +74,53 @@ struct GameplayView: View {
                 .padding(.vertical, 10)
                 .background(Capsule().fill(.black.opacity(0.6)))
                 .padding(.bottom, 28)
+        }
+    }
+
+    private var codeKeypadOverlay: some View {
+        Group {
+            if presenter.showCodeKeypad {
+                Color.black.opacity(0.7)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+
+                VStack(spacing: 20) {
+                    Text("A locked box floats in the blood…")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+
+                    // 3-digit code display
+                    HStack(spacing: 12) {
+                        ForEach(0..<3) { index in
+                            CodeDigitView(digit: presenter.displayedCodeDigits[safe: index])
+                        }
+                    }
+                    .padding(.vertical, 16)
+
+                    // Error message
+                    if let error = presenter.keypadErrorMessage {
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                    }
+
+                    // Keypad buttons
+                    KeypadButtonGrid(
+                        onSubmit: { presenter.submitCode(presenter.enteredCodeDigits) },
+                        onDigit: { digit in
+                            // handled by binding
+                        },
+                        enteredDigits: $presenter.enteredCodeDigits
+                    )
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+                }
+                .padding(.top, 80)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
     }
 

@@ -59,6 +59,17 @@ final class ARService: NSObject, ObservableObject {
     /// Emits when the Listener taps the letter entity.
     let letterTapped = PassthroughSubject<Void, Never>()
 
+    // MARK: - Phase 7 Events
+
+    /// Emits when the Seer taps the blood pool entity.
+    let bloodPoolTapped = PassthroughSubject<Void, Never>()
+
+    /// Emits the blood pool spawn transform so the interactor can expose it for validation.
+    @Published private(set) var bloodPoolWorldPosition: simd_float3?
+
+    /// Emits when the first seal has been revealed (blood pool replaced).
+    @Published private(set) var isFirstSealRevealed = false
+
     // MARK: - AR View
 
     let arView: ARView
@@ -83,6 +94,13 @@ final class ARService: NSObject, ObservableObject {
     private var pendingLetterAnchor: ARAnchor?
     private var pendingLetterTransform: simd_float4x4?
 
+    // MARK: - Phase 7 Private State
+
+    private var bloodPoolAnchorEntity: AnchorEntity?
+    private var footstepsAnchorEntity: AnchorEntity?
+    private var whisperAudioController: AudioPlaybackController?
+    private var hasSpawnedBloodTrail = false
+
     private static let dollAnchorName = "cursed_doll_anchor"
     private static let dollEntityName = "cursed_doll_entity"
     private static let dollModelName = "Hitem3d-1783040308176"
@@ -95,6 +113,18 @@ final class ARService: NSObject, ObservableObject {
     private static let letterAudioSubdirectory = "Sounds"
 
     private static let minimumWallExtent: Float = 0.25
+
+    // MARK: - Phase 7 Constants
+
+    private static let bloodPoolAnchorName = "blood_pool_anchor"
+    private static let bloodPoolEntityName = "blood_pool_entity"
+    private static let bloodPoolWithSealName = "blood_pool_with_seal"
+    private static let footstepsAnchorName = "footsteps_anchor"
+    private static let whisperEntityName = "whisper_audio_entity"
+    private static let whisperAudioName = "BGM"
+    private static let whisperAudioExtension = "mp3"
+    private static let whisperAudioSubdirectory = "Sounds"
+    private static let bloodTrailWalkFraction: Float = 0.30   // 30% of the room's longest floor dimension
 
     // MARK: - Init
 
@@ -465,6 +495,279 @@ final class ARService: NSObject, ObservableObject {
         case .unassigned:
             break
         }
+    }
+
+    // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
+
+    /// Called by the interactor once the letter phase is done. Host only: picks a
+    /// floor spot ~30% of the room's longest dimension away from the room center,
+    /// spawns a trail of red footsteps and a blood pool at the destination.
+    func spawnBloodTrailAndPool() {
+        guard !hasSpawnedBloodTrail else { return }
+
+        let roomCenter: simd_float3
+        if let firstFloor = floorPlanes.values.first {
+            roomCenter = SpatialMath.worldCenter(of: firstFloor)
+        } else if let frame = arView.session.currentFrame {
+            roomCenter = SpatialMath.cameraPosition(from: frame)
+        } else {
+            print("🩸 [AR] No room reference — skipping blood trail")
+            return
+        }
+
+        // Compute room radius: longest horizontal extent among floor planes.
+        let maxDimension: Float = floorPlanes.values.map { max($0.planeExtent.width, $0.planeExtent.height) }.max() ?? 2.0
+        let walkDistance = maxDimension * Self.bloodTrailWalkFraction
+
+        // Pick a destination away from the room center (rejection sample).
+        let destination = randomFloorDestination(from: roomCenter, distance: walkDistance)
+
+        // Spawn footsteps trail.
+        footstepsAnchorEntity = spawnFootsteps(from: roomCenter, to: destination)
+
+        // Spawn blood pool at the destination.
+        let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
+        let poolEntity = makeBloodPoolEntity()
+        poolAnchor.addChild(poolEntity)
+        arView.scene.addAnchor(poolAnchor)
+        bloodPoolAnchorEntity = poolAnchor
+        bloodPoolWorldPosition = destination
+
+        // Asymmetrical visibility: only the Seer can see the blood trail.
+        // The Listener gets the whisper audio entity instead.
+        if localPlayerRole == .seer {
+            footstepsAnchorEntity?.isEnabled = true
+            bloodPoolAnchorEntity?.isEnabled = true
+        } else {
+            footstepsAnchorEntity?.isEnabled = false
+            bloodPoolAnchorEntity?.isEnabled = false
+            spawnWhisperAudio(at: destination)
+        }
+
+        configureBloodPoolTap()
+        hasSpawnedBloodTrail = true
+        print("🩸 [AR] Blood trail spawned — destination: \(destination)")
+    }
+
+    /// Picks a random floor coordinate `distance` metres from `origin`, clamped to
+    /// a tracked floor plane and away from obstacles.
+    private func randomFloorDestination(from origin: simd_float3, distance: Float) -> simd_float3 {
+        let obstacles: [SpatialMath.FloorObstacle] = obstaclePlanes.values.map { plane in
+            let c = SpatialMath.worldCenter(of: plane)
+            let w = plane.planeExtent.width
+            let h = plane.planeExtent.height
+            let radius = min(0.75, 0.5 * (w * w + h * h).squareRoot())
+            return SpatialMath.FloorObstacle(center: c, radius: radius)
+        }
+
+        // Rejection-sample a point at the target distance from origin.
+        for _ in 0..<60 {
+            let angle = Float.random(in: 0..<(2 * .pi))
+            let candidate = simd_float3(
+                origin.x + distance * cos(angle),
+                origin.y,
+                origin.z + distance * sin(angle)
+            )
+            // Clamp Y to the floor.
+            let floorY = SpatialMath.floorY(from: Array(floorPlanes.values), fallback: origin.y)
+            let clamped = simd_float3(candidate.x, floorY, candidate.z)
+
+            if SpatialMath.isClear(clamped, of: obstacles, clearance: 0.5) {
+                return clamped
+            }
+        }
+        return simd_float3(origin.x + distance, origin.y, origin.z)
+    }
+
+    /// Creates a trail of small red squares from `start` to `end`.
+    private func spawnFootsteps(from start: simd_float3, to end: simd_float3) -> AnchorEntity {
+        let anchor = AnchorEntity(world: matrix_identity_float4x4)
+        let stepCount = 12
+        let stepSize: Float = 0.04
+        let material = SimpleMaterial(color: .init(red: 0.4, green: 0.01, blue: 0.02, alpha: 1.0), isMetallic: false)
+
+        for i in 0..<stepCount {
+            let t = Float(i) / Float(stepCount - 1)
+            let position = simd_float3(
+                start.x + (end.x - start.x) * t,
+                start.y + 0.005,   // slightly above floor to avoid z-fighting
+                start.z + (end.z - start.z) * t
+            )
+            let step = ModelEntity(
+                mesh: .generatePlane(width: stepSize, depth: stepSize * 0.7),
+                materials: [material]
+            )
+            // Face the direction of travel.
+            let dx = end.x - start.x
+            let dz = end.z - start.z
+            if dx != 0 || dz != 0 {
+                let angle = atan2f(dx, dz)
+                step.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
+            }
+            step.position = position
+            step.name = "footstep_\(i)"
+            anchor.addChild(step)
+        }
+
+        arView.scene.addAnchor(anchor)
+        print("🩸 [AR] Footsteps trail placed (\(stepCount) steps)")
+        return anchor
+    }
+
+    /// Creates the dark red blood pool plane with collision and input targeting.
+    private func makeBloodPoolEntity() -> ModelEntity {
+        let mesh = MeshResource.generatePlane(width: 0.35, depth: 0.35)
+        let material = SimpleMaterial(
+            color: .init(red: 0.35, green: 0.01, blue: 0.03, alpha: 0.95),
+            isMetallic: false
+        )
+        let pool = ModelEntity(mesh: mesh, materials: [material])
+        pool.name = Self.bloodPoolEntityName
+        pool.generateCollisionShapes(recursive: true)
+        pool.components.set(InputTargetComponent())
+        return pool
+    }
+
+    private func configureBloodPoolTap() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleBloodPoolTap(_:)))
+        arView.addGestureRecognizer(tap)
+    }
+
+    @objc private func handleBloodPoolTap(_ sender: UITapGestureRecognizer) {
+        let location = sender.location(in: arView)
+        guard let tapped = arView.entity(at: location),
+              isBloodPool(tapped) else { return }
+        print("🩸 [AR] Blood pool tapped by Seer")
+        bloodPoolTapped.send(())
+    }
+
+    private func isBloodPool(_ entity: Entity) -> Bool {
+        var current: Entity? = entity
+        while let node = current {
+            if node.name == Self.bloodPoolEntityName { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    // MARK: - Phase 7B — Whispering Ghost (Listener spatial audio)
+
+    /// Called by the interactor once the blood trail is spawned. Host only: places
+    /// an invisible entity at the blood pool destination with aggressive spatial
+    /// audio attenuation so the Listener must physically walk to find it.
+    func spawnWhisperAudio(at destination: simd_float3) {
+        let whisperAnchor = AnchorEntity(world: SpatialMath.translation(destination))
+        let whisperEntity = Entity()
+        whisperEntity.name = Self.whisperEntityName
+        whisperAnchor.addChild(whisperEntity)
+
+        whisperEntity.components.set(SpatialAudioComponent(
+            gain: Audio.Decibel(-3),
+            directivity: .beam(focus: 0),
+            distanceAttenuation: .inverseSquare(
+                referenceDistance: 0.2,
+                maximumDistance: 4.0,
+                rolloffFactor: 2.0
+            )
+        ))
+
+        arView.scene.addAnchor(whisperAnchor)
+
+        Task { await self.startWhisperSpatialAudio(on: whisperEntity) }
+        print("🩸 [AR] Whisper audio placed — aggressive attenuation (ref: 0.2m, max: 4.0m)")
+    }
+
+    /// Loads BGM.mp3 and loops it from the invisible whisper entity.
+    private func startWhisperSpatialAudio(on entity: Entity) async {
+        guard whisperAudioController == nil else { return }
+        let url = whisperAudioURL()
+
+        do {
+            let resource = try await AudioFileResource(
+                contentsOf: url,
+                configuration: .init(shouldLoop: true)
+            )
+            whisperAudioController = entity.playAudio(resource)
+            print("🩸 [AR] Whisper spatial audio playing (BGM.mp3)")
+        } catch {
+            print("🩸 [AR] Failed to load whisper audio: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Phase 7C — First Seal Reveal
+
+    /// Removes the blood trail entities (footsteps + blood pool) and the whisper.
+    func removeBloodTrailEntities() {
+        bloodPoolAnchorEntity.map { arView.scene.removeAnchor($0) }
+        bloodPoolAnchorEntity = nil
+        footstepsAnchorEntity.map { arView.scene.removeAnchor($0) }
+        footstepsAnchorEntity = nil
+        whisperAudioController?.stop()
+        whisperAudioController = nil
+        bloodPoolWorldPosition = nil
+        hasSpawnedBloodTrail = false
+        print("🩸 [AR] Blood trail entities removed")
+    }
+
+    /// Replaces the blood pool with a glowing seal placeholder at the same position.
+    func revealFirstSeal(at position: simd_float3) {
+        removeBloodTrailEntities()
+
+        let sealAnchor = AnchorEntity(world: SpatialMath.translation(position))
+        let seal = makeFirstSealEntity()
+        sealAnchor.addChild(seal)
+        arView.scene.addAnchor(sealAnchor)
+        isFirstSealRevealed = true
+        print("✨ [AR] First Seal revealed")
+    }
+
+    /// Creates the glowing blue seal placeholder entity.
+    private func makeFirstSealEntity() -> ModelEntity {
+        let mesh = MeshResource.generatePlane(width: 0.25, depth: 0.25)
+        let material = SimpleMaterial(
+            color: .init(red: 0.1, green: 0.5, blue: 1.0, alpha: 1.0),
+            isMetallic: true,
+            roughness: 0.2
+        )
+        let seal = ModelEntity(mesh: mesh, materials: [material])
+        seal.name = Self.bloodPoolWithSealName
+        seal.generateCollisionShapes(recursive: true)
+        seal.components.set(InputTargetComponent())
+
+        // Pulse animation using RealityKit's built-in animation system.
+        var transform = seal.transform
+        transform.scale = SIMD3<Float>(1.0, 1.0, 1.0)
+        seal.transform = transform
+
+        // Simple scale pulse via async animation loop.
+        Task { @MainActor in
+            let baseScale: Float = 1.0
+            let pulseRange: Float = 0.15
+            let speed: Float = 2.0
+            let startTime = CACurrentMediaTime()
+            while !seal.scene == nil {
+                let elapsed = CACurrentMediaTime() - startTime
+                let s = baseScale + pulseRange * sin(elapsed * speed)
+                seal.scale = SIMD3<Float>(repeating: s)
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+
+        return seal
+    }
+
+    // MARK: - Audio URL Helper
+
+    private func whisperAudioURL() -> URL? {
+        let bundle = Bundle.main
+        return bundle.url(
+            forResource: Self.whisperAudioName,
+            withExtension: Self.whisperAudioExtension,
+            subdirectory: Self.whisperAudioSubdirectory
+        ) ?? bundle.url(
+            forResource: Self.whisperAudioName,
+            withExtension: Self.whisperAudioExtension
+        )
     }
 
     private func letterAudioURL() -> URL? {

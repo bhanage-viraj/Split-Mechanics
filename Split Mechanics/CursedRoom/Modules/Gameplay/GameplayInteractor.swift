@@ -26,10 +26,19 @@ final class GameplayInteractor: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var displayLink: CADisplayLink?
     private let letterHaptics = LetterProximityHaptics()
+    private let whisperHaptics = LetterProximityHaptics()
+
+    // Phase 7
+    private let clueCode: String = "427"
+    @Published private(set) var sealsCollected: Int = 0
+    @Published private(set) var showCodeKeypad = false
+    @Published private(set) var keypadErrorMessage: String?
 
     private var didAssignRoles = false
     private var didRequestLetterSpawn = false
     private var isProximityLoopActive = false
+    private var isBloodTrailPhaseActive = false
+    private var didSpawnBloodTrail = false
 
     init(arService: ARService, networkService: NetworkService) {
         self.arService = arService
@@ -48,6 +57,10 @@ final class GameplayInteractor: ObservableObject {
         bindLetterSpawn()
         bindLetterNetworkSync()
         bindLetterProximityLoop()
+        bindBloodPoolTap()
+        bindSealEvents()
+        bindListenerWhisperHints()
+        bindClueCodeFromHost()
         assignRolesIfNeeded()
         if playerRole != .unassigned {
             beginLetterHunt()
@@ -56,6 +69,9 @@ final class GameplayInteractor: ObservableObject {
 
     func stop() {
         stopListenerProximityLoop()
+        stopWhisperProximityLoop()
+        letterHaptics.stop()
+        whisperHaptics.stop()
         cancellables.removeAll()
     }
 
@@ -223,4 +239,158 @@ final class GameplayInteractor: ObservableObject {
             }
             .store(in: &cancellables)
     }
+
+    // MARK: - Phase 7A — Blood Pool Tap & Code Validation
+
+    private func bindBloodPoolTap() {
+        arService.bloodPoolTapped
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleBloodPoolTapped()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleBloodPoolTapped() {
+        guard playerRole == .seer else { return }
+        guard !isBloodTrailPhaseActive else { return }
+        isBloodTrailPhaseActive = true
+        showCodeKeypad = true
+        print("🔢 [Gameplay] Seer tapped blood pool — showing keypad")
+    }
+
+    /// Called by the view when the Seer submits a 3-digit code.
+    func submitCode(_ code: String) {
+        guard isBloodTrailPhaseActive else { return }
+
+        if code == clueCode {
+            keypadErrorMessage = nil
+            showCodeKeypad = false
+            isBloodTrailPhaseActive = false
+            print("🔓 [Gameplay] Correct code entered — revealing First Seal")
+
+            // Reveal the seal in AR.
+            if let position = arService.bloodPoolWorldPosition {
+                arService.revealFirstSeal(at: position)
+            }
+
+            // Update local seal count.
+            sealsCollected = 1
+
+            // Notify the other device.
+            networkService.send(.sealCollected(sealNumber: 1))
+
+            // Stop Listener proximity to letter.
+            stopListenerProximityLoop()
+        } else {
+            keypadErrorMessage = "Wrong code. Try again."
+            print("🔒 [Gameplay] Wrong code: \(code)")
+        }
+    }
+
+    // MARK: - Phase 7C — Seal Events (cross-device sync)
+
+    private func bindSealEvents() {
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.sealCollected.rawValue }
+            .sink { [weak self] event in
+                guard let self, let payload = event.payload, let count = Int(payload) else { return }
+                self.sealsCollected = max(self.sealsCollected, count)
+                print("✨ [Gameplay] Received seal update — total: \(self.sealsCollected)")
+            }
+            .store(in: &cancellables)
+
+        // Sync local seal state back to AR so both devices show the seal.
+        $sealsCollected
+            .removeDuplicates()
+            .filter { $0 > 0 }
+            .sink { [weak self] count in
+                guard let self, count > 0, self.arService.isFirstSealRevealed else { return }
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Phase 7B — Listener Whisper Proximity Hints
+
+    private func bindListenerWhisperHints() {
+        // When the blood trail is active, start a proximity loop for the Listener
+        // to guide them toward the whisper via haptics (stronger = closer).
+        arService.$bloodPoolWorldPosition
+            .removeDuplicates()
+            .filter { $0 != nil }
+            .sink { [weak self] position in
+                guard let self, let whisperPos = position, self.playerRole == .listener else { return }
+                self.startWhisperProximityLoop(targetPosition: whisperPos)
+            }
+            .store(in: &cancellables)
+    }
+
+    private var whisperDisplayLink: CADisplayLink?
+    private var isWhisperProximityActive = false
+
+    private func startWhisperProximityLoop(targetPosition: simd_float3) {
+        guard !isWhisperProximityActive else { return }
+        isWhisperProximityActive = true
+
+        whisperDisplayLink = CADisplayLink(target: self, selector: #selector(tickWhisperProximity))
+        whisperDisplayLink?.add(to: .main, forMode: .common)
+
+        // Store target for the tick method.
+        whisperTargetPosition = targetPosition
+        print("🩸 [Gameplay] Listener whisper proximity loop started")
+    }
+
+    private var whisperTargetPosition: simd_float3?
+
+    @objc
+    private func tickWhisperProximity() {
+        guard playerRole == .listener,
+              let target = whisperTargetPosition,
+              let frame = arService.arView.session.currentFrame else { return }
+
+        let cameraPosition = SpatialMath.cameraPosition(from: frame)
+        let distance = SpatialMath.euclideanDistance(cameraPosition, target)
+        let intensity = SpatialMath.letterProximityIntensity(distance: distance, near: 0.3, far: 4.0)
+        whisperHaptics.update(distance: distance)
+    }
+
+    private func stopWhisperProximityLoop() {
+        whisperDisplayLink?.invalidate()
+        whisperDisplayLink = nil
+        isWhisperProximityActive = false
+        whisperTargetPosition = nil
+    }
+
+    // MARK: - Blood Trail Spawning (triggered after letter phase)
+
+    /// Call this after the letter is collected to start Phase 7A.
+    func beginBloodTrailPhase() {
+        guard !didSpawnBloodTrail else { return }
+        didSpawnBloodTrail = true
+
+        if networkService.role == .host {
+            arService.spawnBloodTrailAndPool()
+            // Send clue code to the Guest.
+            networkService.send(.clueCode(code: clueCode))
+            print("🔢 [Gameplay] Host sent clue code to Guest")
+        }
+
+        stopListenerProximityLoop()
+        print("🩸 [Gameplay] Phase 7 blood trail phase started")
+    }
+
+    /// Guest receives the clue code from the Host.
+    private func bindClueCodeFromHost() {
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.clueCode.rawValue }
+            .sink { [weak self] event in
+                guard let self, let code = event.payload else { return }
+                // Store the code for the Listener to hear from the whisper audio.
+                self.receivedClueCode = code
+                print("🔢 [Gameplay] Guest received clue code: \(code)")
+            }
+            .store(in: &cancellables)
+    }
+
+    private var receivedClueCode: String?
 }
