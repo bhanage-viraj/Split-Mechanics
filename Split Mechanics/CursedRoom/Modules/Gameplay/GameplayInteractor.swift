@@ -123,6 +123,10 @@ final class GameplayInteractor: ObservableObject {
         arService.setLocalPlayerRole(playerRole)
         if networkService.role == .host {
             arService.requestLetterSpawn()
+        } else if let event = networkService.latestEvent(ofType: .letterSpawn),
+                  let transform = LetterSpawnPayload.decode(event.payload) {
+            // Guest may have missed the live event while still on the curse transition.
+            arService.spawnLetterAtSyncedTransform(transform, for: playerRole)
         }
         print("📜 [Gameplay] Phase 6B started — role: \(playerRole.rawValue)")
     }

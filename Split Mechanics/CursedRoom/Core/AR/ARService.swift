@@ -79,6 +79,7 @@ final class ARService: NSObject, ObservableObject {
     private var wantsLetter = false
     private var letterAnchorAdded = false
     private var letterAnchorEntity: AnchorEntity?
+    private var letterAudioController: AudioPlaybackController?
     private var pendingLetterAnchor: ARAnchor?
     private var pendingLetterTransform: simd_float4x4?
 
@@ -94,11 +95,6 @@ final class ARService: NSObject, ObservableObject {
     private static let letterAudioSubdirectory = "Sounds"
 
     private static let minimumWallExtent: Float = 0.25
-
-    private static let letterSpatialGainSeer: Audio.Decibel = -60
-    private static let letterSpatialGainListener: Audio.Decibel = 20
-    private static let letterSpatialRolloffListener: Float = 15.0
-    private static let letterSpatialReferenceDistance: Float = 3.0
 
     // MARK: - Init
 
@@ -449,28 +445,57 @@ final class ARService: NSObject, ObservableObject {
     private func attachLetterContent(to anchorEntity: AnchorEntity, for role: PlayerRole) {
         switch role {
         case .seer:
-            // Seer sees the letter but cannot hear it (audio muted at -60 dB)
+            // Seer sees the letter; no spatial audio (they must rely on the Listener).
             let visual = makeLetterVisual()
             anchorEntity.addChild(visual)
-
-            // Letter is clickable for the seer
-            configureLetterTap(on: visual)
-
-            // Seer gets a silent audio emitter (kept for consistency, -60 dB is inaudible)
-            let audioEmitter = Entity()
-            audioEmitter.name = Self.letterEntityName + "_audio"
-            anchorEntity.addChild(audioEmitter)
-            startLetterSpatialAudio(on: audioEmitter, for: role)
+            configureLetterTap()
 
         case .listener:
-            // Listener only hears — no visual, no tap
-            let audioEmitter = Entity()
-            audioEmitter.name = Self.letterEntityName
-            anchorEntity.addChild(audioEmitter)
-            startLetterSpatialAudio(on: audioEmitter, for: role)
+            // Listener cannot see the letter — only hears it via RealityKit spatial audio.
+            let listenerAudio = Entity()
+            listenerAudio.name = Self.letterEntityName + "_listener"
+            anchorEntity.addChild(listenerAudio)
+            listenerAudio.components.set(SpatialAudioComponent(
+                gain: Audio.Decibel(-3),
+                directivity: .beam(focus: 0),
+                distanceAttenuation: .rolloff(factor: 1.0)
+            ))
+            Task { await self.startLetterSpatialAudio(on: listenerAudio) }
 
         case .unassigned:
             break
+        }
+    }
+
+    private func letterAudioURL() -> URL? {
+        let bundle = Bundle.main
+        return bundle.url(
+            forResource: Self.letterAudioName,
+            withExtension: Self.letterAudioExtension,
+            subdirectory: Self.letterAudioSubdirectory
+        ) ?? bundle.url(
+            forResource: Self.letterAudioName,
+            withExtension: Self.letterAudioExtension
+        )
+    }
+
+    /// Loads BGM.mp3 and loops it from the invisible listener-only audio entity.
+    private func startLetterSpatialAudio(on entity: Entity) async {
+        guard letterAudioController == nil else { return }
+        guard let url = letterAudioURL() else {
+            print("📜 [AR] Letter audio not found in bundle")
+            return
+        }
+
+        do {
+            let resource = try await AudioFileResource(
+                contentsOf: url,
+                configuration: .init(shouldLoop: true)
+            )
+            letterAudioController = entity.playAudio(resource)
+            print("📜 [AR] Letter spatial audio playing")
+        } catch {
+            print("📜 [AR] Failed to load letter audio: \(error.localizedDescription)")
         }
     }
 
@@ -484,90 +509,18 @@ final class ARService: NSObject, ObservableObject {
         return letter
     }
 
-    private func configureLetterTap(on visual: ModelEntity) {
-        let tap = CoherentTapGestureRecognizer(target: self, action: #selector(handleLetterTap(_:)))
-        visual.addGestureRecognizer(tap)
+    private func configureLetterTap() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleLetterTap(_:)))
+        arView.addGestureRecognizer(tap)
     }
 
     @objc private func handleLetterTap(_ sender: UITapGestureRecognizer) {
+        let location = sender.location(in: arView)
+        guard let tapped = arView.entity(at: location),
+              let entity = tapped as? ModelEntity,
+              entity.name == Self.letterEntityName else { return }
         print("📜 [AR] Letter tapped by Seer")
         letterTapped.send(())
-    }
-
-    /// Listener-only: boosted gain + wider rolloff so the sound is audible across
-    /// the entire room, not just when standing 20 cm away. Seer gets -60 dB (muted).
-    ///
-    /// Design rationale:
-    ///   • Listener gain: +20 dB — audible throughout a typical room.
-    ///   • Rolloff 15.0 — gentle attenuation; the source stays loud from 0.5–5 m.
-    ///   • Seer gain: -60 dB — effectively silent; Seer must rely on the Listener.
-    private func configureLetterSpatialAudio(on entity: Entity, for role: PlayerRole) {
-        switch role {
-        case .seer:
-            let spatial = SpatialAudioComponent(
-                gain: Self.letterSpatialGainSeer,
-                directivity: .beam(focus: 0),
-                distanceAttenuation: .rolloff(factor: Self.letterSpatialRolloffListener)
-            )
-            entity.components.set(spatial)
-            print("📜 [AR] Seer letter audio — muted (-60 dB)")
-        case .listener:
-            let spatial = SpatialAudioComponent(
-                gain: Self.letterSpatialGainListener,
-                directivity: .beam(focus: 0),
-                distanceAttenuation: .rolloff(factor: Self.letterSpatialRolloffListener)
-            )
-            entity.components.set(spatial)
-            print("📜 [AR] Listener letter audio — gain +20 dB, rolloff 15.0, omnidirectional")
-        case .unassigned:
-            break
-        }
-    }
-
-    private func startLetterSpatialAudio(on entity: Entity, for role: PlayerRole) {
-        configureLetterSpatialAudio(on: entity, for: role)
-
-        Task { @MainActor in
-            guard let resource = await loadLetterAudioResource() else {
-                print("📜 [AR] Letter audio missing — check BGM.mp3 is in Copy Bundle Resources")
-                return
-            }
-            entity.playAudio(resource)
-            print("📜 [AR] Letter spatial audio playing for \(role.rawValue)")
-        }
-    }
-
-    private func loadLetterAudioResource() async -> AudioFileResource? {
-        let bundle = Bundle.main
-        let candidateURLs = [
-            bundle.url(forResource: Self.letterAudioName, withExtension: Self.letterAudioExtension, subdirectory: Self.letterAudioSubdirectory),
-            bundle.url(forResource: Self.letterAudioName, withExtension: Self.letterAudioExtension),
-            bundle.url(forResource: "\(Self.letterAudioName).\(Self.letterAudioExtension)", withExtension: nil)
-        ].compactMap { $0 }
-
-        guard let url = candidateURLs.first else {
-            print("📜 [AR] \(Self.letterAudioName).\(Self.letterAudioExtension) not found in bundle")
-            return nil
-        }
-
-        var config = AudioFileResource.Configuration()
-        config.shouldLoop = true
-
-        do {
-            return try await AudioFileResource(contentsOf: url, configuration: config)
-        } catch {
-            print("📜 [AR] Async audio load failed: \(error.localizedDescription)")
-            do {
-                return try AudioFileResource.load(
-                    contentsOf: url,
-                    withName: Self.letterAudioName,
-                    configuration: config
-                )
-            } catch {
-                print("📜 [AR] Sync audio load failed: \(error.localizedDescription)")
-                return nil
-            }
-        }
     }
 
     // MARK: - Doll Rendering (both devices)
