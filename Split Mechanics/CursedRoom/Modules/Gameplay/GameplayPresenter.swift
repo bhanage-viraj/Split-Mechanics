@@ -27,6 +27,9 @@ final class GameplayPresenter: ObservableObject {
     // Seal progress
     @Published private(set) var sealsCollected: Int = 0
 
+    // Phase 7C — keypad digit entry
+    @Published private(set) var enteredDigits: [String] = []
+
     private let interactor: GameplayInteractor
     var cancellables = Set<AnyCancellable>()
 
@@ -79,6 +82,9 @@ final class GameplayPresenter: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] msg in
                 self?.keypadErrorMessage = msg
+                if msg != nil {
+                    self?.clearEnteredDigits()
+                }
             }
             .store(in: &cancellables)
 
@@ -108,5 +114,20 @@ final class GameplayPresenter: ObservableObject {
     /// Trigger the blood trail phase (called after the letter is dismissed).
     func beginBloodTrailPhase() {
         interactor.beginBloodTrailPhase()
+    }
+
+    // MARK: - Keypad Helpers
+
+    func appendDigit(_ digit: String) {
+        guard enteredDigits.count < 3 else { return }
+        enteredDigits.append(digit)
+    }
+
+    func submitCurrentCode() {
+        submitCode(enteredDigits.joined())
+    }
+
+    func clearEnteredDigits() {
+        enteredDigits = []
     }
 }
