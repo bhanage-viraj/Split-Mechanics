@@ -70,6 +70,23 @@ final class ARService: NSObject, ObservableObject {
     /// Emits when the first seal has been revealed (blood pool replaced).
     @Published private(set) var isFirstSealRevealed = false
 
+    // MARK: - Phase 8A Events
+
+    /// Emits when the Seer taps the frequency clue entity.
+    let frequencyClueTapped = PassthroughSubject<Void, Never>()
+
+    /// Emits when the Seer taps the second seal entity.
+    let seal2Tapped = PassthroughSubject<Void, Never>()
+
+    /// World position of the stone slab once spawned.
+    @Published private(set) var stoneSlabWorldPosition: simd_float3?
+
+    /// `true` after the second seal has been revealed on the stone slab.
+    @Published private(set) var isSecondSealRevealed = false
+
+    /// `true` after the frequency phase content has been spawned.
+    @Published private(set) var isFrequencyPhaseSpawned = false
+
     // MARK: - AR View
 
     let arView: ARView
@@ -100,6 +117,21 @@ final class ARService: NSObject, ObservableObject {
     private var footstepsAnchorEntity: AnchorEntity?
     private var whisperAudioHandle: SpatialAudioEmitter.Handle?
     private var hasSpawnedBloodTrail = false
+
+    // MARK: - Phase 8A Private State
+
+    private var goldCoinsAnchorEntity: AnchorEntity?
+    private var stoneSlabAnchorEntity: AnchorEntity?
+    private var frequencyClueAnchorEntity: AnchorEntity?
+    private var barrierAnchorEntity: AnchorEntity?
+    private var seal2AnchorEntity: AnchorEntity?
+    private var hasSpawnedFrequencyPhase = false
+
+    // MARK: - Phase 8B Private State
+
+    private var frequencyEmitterAnchor: AnchorEntity?
+    private var frequencyEmitterEntity: Entity?
+    private var hasSpawnedFrequencyEmitter = false
 
     private static let dollAnchorName = "cursed_doll_anchor"
     private static let dollEntityName = "cursed_doll_entity"
@@ -136,6 +168,27 @@ final class ARService: NSObject, ObservableObject {
     private static let footstepsTextureName = "footsteps"
     private static let bloodPoolTextureName = "blood pool (hint1)"
     private static let sealTextureName = "sealbox(with seal)"
+
+    // MARK: - Phase 8A Constants
+
+    private static let goldCoinsAnchorName = "goldCoins"
+    private static let stoneSlabEntityName = "stoneSlab"
+    private static let frequencyClueEntityName = "frequencyClue"
+    private static let barrierEntityName = "barrier"
+    private static let seal2EntityName = "seal2"
+    private static let coinTrailWalkFraction: Float = 0.35
+    private static let coinCount = 14
+
+    // MARK: - Phase 8B Constants
+
+    private static let frequencyEmitterEntityName = "frequency_emitter_entity"
+    private static let stoneButtonAudioName = "Stone button"
+    private static let stoneButtonAudioExtension = "wav"
+    private static let frequencyToneAudioName = "Frequency"
+    private static let frequencyToneAudioExtension = "wav"
+    private static let frequencyEmitterReferenceDistance: Float = 0.3
+    private static let frequencyEmitterMaximumDistance: Float = 5.0
+    private static let frequencyEmitterRolloffFactor: Float = 2.0
 
     // MARK: - Init
 
@@ -519,12 +572,37 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
 
-    /// Called by the interactor once the letter phase is done. Host picks a
-    /// floor spot ~30% of the room's longest dimension away from the room center,
-    /// spawns a trail of red footsteps and a blood pool at the destination.
+    struct BloodTrailSpawnResult {
+        let destination: simd_float3
+        let bendSide: Float
+    }
+
+    /// Host authority: picks destination, lays footprints on a curved line, spawns pool.
     @discardableResult
-    func spawnBloodTrailAndPool() -> (roomCenter: simd_float3, destination: simd_float3)? {
+    func spawnBloodTrailAndPool() -> BloodTrailSpawnResult? {
+        let bendSide: Float = Bool.random() ? 1 : -1
+        return spawnBloodTrailAndPool(destination: nil, bendSide: bendSide)
+    }
+
+    /// Guest (or Host resync): uses the synced destination and curve direction.
+    @discardableResult
+    func spawnBloodTrailAtSyncedDestination(
+        _ destination: simd_float3,
+        bendSide: Float
+    ) -> BloodTrailSpawnResult? {
+        spawnBloodTrailAndPool(destination: destination, bendSide: bendSide)
+    }
+
+    @discardableResult
+    private func spawnBloodTrailAndPool(
+        destination syncedDestination: simd_float3?,
+        bendSide: Float
+    ) -> BloodTrailSpawnResult? {
         guard !hasSpawnedBloodTrail else { return nil }
+        guard let floorY = resolvedFloorY() else {
+            print("🩸 [AR] No floor height — skipping blood trail")
+            return nil
+        }
 
         let trailStart: simd_float3
         if let letterPosition = letterWorldPosition {
@@ -535,23 +613,33 @@ final class ARService: NSObject, ObservableObject {
                 floorY: floorY
             )
         } else {
-            print("🩸 [AR] No room reference — skipping blood trail")
+            print("🩸 [AR] No trail start — skipping blood trail")
             return nil
         }
 
-        let maxDimension: Float = floorPlanes.values.map { max($0.planeExtent.width, $0.planeExtent.height) }.max() ?? 2.0
-        let walkDistance = maxDimension * Self.bloodTrailWalkFraction
-        let destination = randomFloorDestination(from: roomCenter, distance: walkDistance)
+        let destination: simd_float3
+        if let syncedDestination {
+            destination = SpatialMath.projectToFloor(syncedDestination, floorY: floorY)
+        } else {
+            let maxDimension: Float = floorPlanes.values
+                .map { max($0.planeExtent.width, $0.planeExtent.height) }
+                .max() ?? 3.0
+            let walkDistance = max(1.4, maxDimension * Self.bloodTrailWalkFraction)
+            destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
+        }
 
-        spawnBloodTrailAndPool(from: roomCenter, to: destination)
-        return (roomCenter, destination)
-    }
+        let curvedPath = generateCurvedFootstepPath(
+            from: trailStart,
+            to: destination,
+            floorY: floorY,
+            bendSide: bendSide
+        )
+        guard !curvedPath.isEmpty else {
+            print("🩸 [AR] Empty footprint path — skipping blood trail")
+            return nil
+        }
 
-    /// Places the blood trail at synced world coordinates (Guest receives from Host).
-    func spawnBloodTrailAndPool(from roomCenter: simd_float3, to destination: simd_float3) {
-        guard !hasSpawnedBloodTrail else { return }
-
-        footstepsAnchorEntity = spawnFootsteps(from: roomCenter, to: destination)
+        footstepsAnchorEntity = spawnFootsteps(along: curvedPath, floorY: floorY)
 
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
         let poolEntity = makeBloodPoolEntity()
@@ -813,6 +901,400 @@ final class ARService: NSObject, ObservableObject {
         }
 
         return seal
+    }
+
+    // MARK: - Phase 8A — Gold Coins, Stone Slab & Frequency Clue
+
+    /// Spawns a trail of gold coins leading to a stone slab with a frequency clue.
+    /// Seer-only visuals; hidden from the Listener via `isEnabled`.
+    func spawnFrequencyPhase(at slabDestination: simd_float3? = nil) {
+        guard !hasSpawnedFrequencyPhase else { return }
+
+        let roomCenter: simd_float3
+        if let firstFloor = floorPlanes.values.first {
+            roomCenter = SpatialMath.worldCenter(of: firstFloor)
+        } else if let frame = arView.session.currentFrame {
+            roomCenter = SpatialMath.cameraPosition(from: frame)
+        } else {
+            print("🪙 [AR] No room reference — skipping frequency phase spawn")
+            return
+        }
+
+        let maxDimension: Float = floorPlanes.values
+            .map { max($0.planeExtent.width, $0.planeExtent.height) }
+            .max() ?? 2.0
+        let walkDistance = maxDimension * Self.coinTrailWalkFraction
+        let floorY = resolvedFloorY() ?? roomCenter.y
+        let destination = slabDestination ?? randomFloorDestination(
+            from: roomCenter,
+            distance: walkDistance,
+            floorY: floorY
+        )
+
+        goldCoinsAnchorEntity = spawnGoldCoins(from: roomCenter, to: destination)
+        stoneSlabAnchorEntity = spawnStoneSlab(at: destination)
+        stoneSlabWorldPosition = destination
+
+        frequencyClueAnchorEntity = spawnFrequencyClue(near: destination)
+        barrierAnchorEntity = spawnBarrier(between: roomCenter, and: destination)
+
+        let seerVisible = localPlayerRole == .seer
+        goldCoinsAnchorEntity?.isEnabled = seerVisible
+        stoneSlabAnchorEntity?.isEnabled = seerVisible
+        frequencyClueAnchorEntity?.isEnabled = seerVisible
+        barrierAnchorEntity?.isEnabled = seerVisible
+
+        configureFrequencyPhaseTaps()
+        hasSpawnedFrequencyPhase = true
+        isFrequencyPhaseSpawned = true
+        statusMessage = seerVisible
+            ? "A trail of gold glimmers across the floor…"
+            : statusMessage
+        print("🪙 [AR] Frequency phase spawned — slab at \(destination)")
+    }
+
+    /// Creates a trail of small shiny gold cylinders from `start` to `end`.
+    private func spawnGoldCoins(from start: simd_float3, to end: simd_float3) -> AnchorEntity {
+        let anchor = AnchorEntity(world: matrix_identity_float4x4)
+        anchor.name = Self.goldCoinsAnchorName
+
+        let material = SimpleMaterial(
+            color: .init(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0),
+            roughness: 0.15,
+            isMetallic: true
+        )
+
+        for i in 0..<Self.coinCount {
+            let t = Float(i) / Float(Self.coinCount - 1)
+            let position = simd_float3(
+                start.x + (end.x - start.x) * t,
+                start.y + 0.012,
+                start.z + (end.z - start.z) * t
+            )
+            let coin = ModelEntity(
+                mesh: .generateCylinder(height: 0.008, radius: 0.022),
+                materials: [material]
+            )
+            coin.name = "\(Self.goldCoinsAnchorName)_\(i)"
+            coin.position = position
+            anchor.addChild(coin)
+        }
+
+        arView.scene.addAnchor(anchor)
+        return anchor
+    }
+
+    /// Creates a flat gray stone slab with a recessed hole in the center.
+    private func spawnStoneSlab(at position: simd_float3) -> AnchorEntity {
+        let anchor = AnchorEntity(world: SpatialMath.translation(position))
+
+        let slabMaterial = SimpleMaterial(
+            color: .init(red: 0.45, green: 0.43, blue: 0.40, alpha: 1.0),
+            roughness: 0.85,
+            isMetallic: false
+        )
+        let slab = ModelEntity(
+            mesh: .generateBox(size: [0.55, 0.04, 0.55]),
+            materials: [slabMaterial]
+        )
+        slab.name = Self.stoneSlabEntityName
+        slab.position.y = 0.02
+        anchor.addChild(slab)
+
+        // Dark recessed hole in the center.
+        let holeMaterial = SimpleMaterial(
+            color: .init(red: 0.08, green: 0.07, blue: 0.06, alpha: 1.0),
+            isMetallic: false
+        )
+        let hole = ModelEntity(
+            mesh: .generateCylinder(height: 0.05, radius: 0.09),
+            materials: [holeMaterial]
+        )
+        hole.position.y = 0.01
+        anchor.addChild(hole)
+
+        arView.scene.addAnchor(anchor)
+        return anchor
+    }
+
+    /// Places a glowing clue plane beside the slab (wall-adjacent or floor offset).
+    private func spawnFrequencyClue(near slabPosition: simd_float3) -> AnchorEntity {
+        let offset = simd_float3(0.35, 0.0, 0.0)
+        let cluePosition = simd_float3(
+            slabPosition.x + offset.x,
+            slabPosition.y + SpatialMath.letterHeightAboveFloor * 0.5,
+            slabPosition.z + offset.z
+        )
+
+        let anchor = AnchorEntity(world: SpatialMath.translation(cluePosition))
+
+        let material = SimpleMaterial(
+            color: .init(red: 0.9, green: 0.75, blue: 0.2, alpha: 0.95),
+            roughness: 0.2,
+            isMetallic: true
+        )
+        let clue = ModelEntity(
+            mesh: .generatePlane(width: 0.18, depth: 0.18),
+            materials: [material]
+        )
+        clue.name = Self.frequencyClueEntityName
+        clue.generateCollisionShapes(recursive: true)
+        clue.components.set(InputTargetComponent())
+
+        // Subtle glow pulse.
+        Task { @MainActor in
+            let startTime = CACurrentMediaTime()
+            while clue.scene != nil {
+                let elapsed = CACurrentMediaTime() - startTime
+                let glow = 0.85 + 0.15 * sinf(Float(elapsed * 2.5))
+                clue.scale = SIMD3<Float>(repeating: Float(glow))
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+
+        anchor.addChild(clue)
+        arView.scene.addAnchor(anchor)
+        return anchor
+    }
+
+    /// Invisible-to-gameplay barrier the Seer must pass after the frequency puzzle.
+    private func spawnBarrier(between start: simd_float3, and end: simd_float3) -> AnchorEntity {
+        let midpoint = simd_float3(
+            (start.x + end.x) * 0.5,
+            start.y + 0.6,
+            (start.z + end.z) * 0.5
+        )
+        let anchor = AnchorEntity(world: SpatialMath.translation(midpoint))
+
+        let material = SimpleMaterial(
+            color: .init(red: 0.15, green: 0.12, blue: 0.2, alpha: 0.55),
+            isMetallic: false
+        )
+        let barrier = ModelEntity(
+            mesh: .generateBox(size: [1.2, 1.2, 0.06]),
+            materials: [material]
+        )
+        barrier.name = Self.barrierEntityName
+
+        let dx = end.x - start.x
+        let dz = end.z - start.z
+        if dx != 0 || dz != 0 {
+            let angle = atan2f(dx, dz)
+            barrier.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
+        }
+
+        anchor.addChild(barrier)
+        arView.scene.addAnchor(anchor)
+        return anchor
+    }
+
+    /// Removes the hidden barrier blocking the Seer's path.
+    func removeBarrier() {
+        barrierAnchorEntity.map { arView.scene.removeAnchor($0) }
+        barrierAnchorEntity = nil
+        print("🪙 [AR] Barrier removed")
+    }
+
+    /// Spawns the second seal rising from the stone slab's central hole.
+    func revealSecondSeal() {
+        guard !isSecondSealRevealed else { return }
+        guard let slabPosition = stoneSlabWorldPosition else {
+            print("🪙 [AR] Cannot reveal second seal — no slab position")
+            return
+        }
+
+        let sealPosition = simd_float3(slabPosition.x, slabPosition.y + 0.12, slabPosition.z)
+        let sealAnchor = AnchorEntity(world: SpatialMath.translation(sealPosition))
+        let seal = makeSecondSealEntity()
+        sealAnchor.addChild(seal)
+        arView.scene.addAnchor(sealAnchor)
+        seal2AnchorEntity = sealAnchor
+        isSecondSealRevealed = true
+        statusMessage = "The Second Seal has risen…"
+        print("✨ [AR] Second Seal revealed")
+    }
+
+    /// Creates the glowing green second seal placeholder.
+    private func makeSecondSealEntity() -> ModelEntity {
+        let material = SimpleMaterial(
+            color: .init(red: 0.1, green: 0.85, blue: 0.3, alpha: 1.0),
+            roughness: 0.2,
+            isMetallic: true
+        )
+        let seal = ModelEntity(
+            mesh: .generateBox(size: [0.14, 0.14, 0.14]),
+            materials: [material]
+        )
+        seal.name = Self.seal2EntityName
+        seal.generateCollisionShapes(recursive: true)
+        seal.components.set(InputTargetComponent())
+
+        Task { @MainActor in
+            let startTime = CACurrentMediaTime()
+            while seal.scene != nil {
+                let elapsed = CACurrentMediaTime() - startTime
+                let bob = 0.12 * sinf(Float(elapsed * 1.8))
+                seal.position.y = bob
+                let s = 1.0 + 0.1 * sinf(Float(elapsed * 2.5))
+                seal.scale = SIMD3<Float>(repeating: s)
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+        }
+
+        return seal
+    }
+
+    private func configureFrequencyPhaseTaps() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleFrequencyPhaseTap(_:)))
+        arView.addGestureRecognizer(tap)
+    }
+
+    @objc private func handleFrequencyPhaseTap(_ sender: UITapGestureRecognizer) {
+        let location = sender.location(in: arView)
+        guard let tapped = arView.entity(at: location) else { return }
+
+        if isFrequencyClue(tapped) {
+            print("🪙 [AR] Frequency clue tapped by Seer")
+            frequencyClueTapped.send(())
+        } else if isSeal2(tapped) {
+            print("✨ [AR] Second seal tapped by Seer")
+            seal2Tapped.send(())
+        }
+    }
+
+    private func isFrequencyClue(_ entity: Entity) -> Bool {
+        var current: Entity? = entity
+        while let node = current {
+            if node.name == Self.frequencyClueEntityName { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    private func isSeal2(_ entity: Entity) -> Bool {
+        var current: Entity? = entity
+        while let node = current {
+            if node.name == Self.seal2EntityName { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    // MARK: - Phase 8B — Frequency Scanner Emitter (Spatial Audio)
+
+    /// Host only: spawns an invisible spatial-audio emitter the Listener hunts by ear.
+    func spawnFrequencyEmitter() {
+        guard !hasSpawnedFrequencyEmitter else { return }
+        guard let floorY = resolvedFloorY() else { return }
+
+        let origin: simd_float3
+        if let frame = arView.session.currentFrame {
+            origin = SpatialMath.cameraPosition(from: frame)
+        } else {
+            return
+        }
+
+        let position = randomFloorDestination(from: origin, distance: 1.8, floorY: floorY)
+        let anchor = AnchorEntity(world: SpatialMath.translation(position))
+        let entity = Entity()
+        entity.name = Self.frequencyEmitterEntityName
+        anchor.addChild(entity)
+
+        entity.components.set(SpatialAudioComponent(
+            gain: Audio.Decibel(-60),
+            directivity: .beam(focus: 0),
+            distanceAttenuation: .rolloff(factor: Double(Self.frequencyEmitterRolloffFactor))
+        ))
+
+        arView.scene.addAnchor(anchor)
+        frequencyEmitterAnchor = anchor
+        frequencyEmitterEntity = entity
+        hasSpawnedFrequencyEmitter = true
+
+        Task { await self.startFrequencyTone(on: entity) }
+        print("📡 [AR] Frequency emitter spawned at \(position)")
+    }
+
+    var frequencyEmitterWorldPosition: simd_float3? {
+        guard let entity = frequencyEmitterEntity else { return nil }
+        let worldTransform = entity.transformMatrix(relativeTo: nil)
+        return simd_float3(
+            worldTransform.columns.3.x,
+            worldTransform.columns.3.y,
+            worldTransform.columns.3.z
+        )
+    }
+
+    func playStoneButtonPress() {
+        guard let entity = frequencyEmitterEntity else { return }
+        Task {
+            guard let url = stoneButtonAudioURL() else {
+                print("🔊 [AR] Stone button audio not found in bundle")
+                return
+            }
+            do {
+                let resource = try await AudioFileResource(contentsOf: url)
+                _ = entity.playAudio(resource)
+                print("🔊 [AR] Stone button pressed")
+            } catch {
+                print("🔊 [AR] Failed to play stone button audio: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func updateFrequencyAudio(signalClarity: Double, distanceMeters: Double) {
+        guard let entity = frequencyEmitterEntity else { return }
+        guard var spatial = entity.components[SpatialAudioComponent.self] else { return }
+
+        let clarity = Float(signalClarity)
+        let clarityGain: Float
+        if clarity <= 0.01 {
+            clarityGain = -60
+        } else {
+            clarityGain = -60 + 57 * clarity
+        }
+
+        spatial.gain = Audio.Decibel(clarityGain)
+        entity.components.set(spatial)
+    }
+
+    func removeFrequencyEmitter() {
+        guard let anchor = frequencyEmitterAnchor else { return }
+        arView.scene.removeAnchor(anchor)
+        frequencyEmitterAnchor = nil
+        frequencyEmitterEntity = nil
+        hasSpawnedFrequencyEmitter = false
+        print("📡 [AR] Frequency emitter removed")
+    }
+
+    private func startFrequencyTone(on entity: Entity) async {
+        guard let url = frequencyToneAudioURL() else {
+            print("🔊 [AR] Frequency tone not found — using silent emitter placeholder")
+            return
+        }
+        do {
+            let resource = try await AudioFileResource(
+                contentsOf: url,
+                configuration: .init(shouldLoop: true)
+            )
+            _ = entity.playAudio(resource)
+        } catch {
+            print("🔊 [AR] Failed to start frequency tone: \(error.localizedDescription)")
+        }
+    }
+
+    private func stoneButtonAudioURL() -> URL? {
+        bundleAudioURL(named: Self.stoneButtonAudioName, extension: Self.stoneButtonAudioExtension)
+    }
+
+    private func frequencyToneAudioURL() -> URL? {
+        bundleAudioURL(named: Self.frequencyToneAudioName, extension: Self.frequencyToneAudioExtension)
+    }
+
+    private func bundleAudioURL(named name: String, extension ext: String) -> URL? {
+        let bundle = Bundle.main
+        return bundle.url(forResource: name, withExtension: ext)
+            ?? bundle.url(forResource: name, withExtension: ext, subdirectory: "Sounds")
     }
 
     // MARK: - Spatial Audio
