@@ -124,7 +124,10 @@ final class ARService: NSObject, ObservableObject {
     private static let whisperAudioName = "BGM"
     private static let whisperAudioExtension = "mp3"
     private static let whisperAudioSubdirectory = "Sounds"
-    private static let bloodTrailWalkFraction: Float = 0.30   // 30% of the room's longest floor dimension
+    private static let bloodTrailWalkFraction: Float = 0.62   // ~62% of the room's longest floor dimension
+    private static let footprintBaseWidth: Float = 0.32
+    private static let footprintStepCount: Int = 30
+    private static let footprintFloorOffset: Float = 0.006
 
     // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
 
@@ -506,33 +509,46 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
 
-    /// Called by the interactor once the letter phase is done. Host only: picks a
-    /// floor spot ~30% of the room's longest dimension away from the room center,
-    /// spawns a trail of red footsteps and a blood pool at the destination.
+    /// Called by the interactor once the letter phase is done. Host only: starts at
+    /// the letter, winds a curved footprint trail across the room, and places the
+    /// blood pool at the far end.
     func spawnBloodTrailAndPool() {
         guard !hasSpawnedBloodTrail else { return }
 
-        let roomCenter: simd_float3
-        if let firstFloor = floorPlanes.values.first {
-            roomCenter = SpatialMath.worldCenter(of: firstFloor)
+        let floorY = SpatialMath.floorY(
+            from: Array(floorPlanes.values),
+            fallback: letterWorldPosition?.y ?? 0
+        )
+
+        let trailStart: simd_float3
+        if let letterPosition = letterWorldPosition {
+            trailStart = SpatialMath.projectToFloor(letterPosition, floorY: floorY)
         } else if let frame = arView.session.currentFrame {
-            roomCenter = SpatialMath.cameraPosition(from: frame)
+            trailStart = SpatialMath.projectToFloor(
+                SpatialMath.cameraPosition(from: frame),
+                floorY: floorY
+            )
         } else {
             print("🩸 [AR] No room reference — skipping blood trail")
             return
         }
 
-        // Compute room radius: longest horizontal extent among floor planes.
-        let maxDimension: Float = floorPlanes.values.map { max($0.planeExtent.width, $0.planeExtent.height) }.max() ?? 2.0
-        let walkDistance = maxDimension * Self.bloodTrailWalkFraction
+        let maxDimension: Float = floorPlanes.values
+            .map { max($0.planeExtent.width, $0.planeExtent.height) }
+            .max() ?? 3.0
+        let walkDistance = max(2.0, maxDimension * Self.bloodTrailWalkFraction)
+        let roomRadius = maxDimension * 0.5
 
-        // Pick a destination away from the room center (rejection sample).
-        let destination = randomFloorDestination(from: roomCenter, distance: walkDistance)
+        let destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
+        let curvedPath = generateCurvedFootstepPath(
+            from: trailStart,
+            to: destination,
+            roomRadius: roomRadius,
+            floorY: floorY
+        )
 
-        // Spawn footsteps trail.
-        footstepsAnchorEntity = spawnFootsteps(from: roomCenter, to: destination)
+        footstepsAnchorEntity = spawnFootsteps(along: curvedPath)
 
-        // Spawn blood pool at the destination.
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
         let poolEntity = makeBloodPoolEntity()
         poolAnchor.addChild(poolEntity)
@@ -540,8 +556,6 @@ final class ARService: NSObject, ObservableObject {
         bloodPoolAnchorEntity = poolAnchor
         bloodPoolWorldPosition = destination
 
-        // Asymmetrical visibility: only the Seer can see the blood trail.
-        // The Listener gets the whisper audio entity instead.
         if localPlayerRole == .seer {
             footstepsAnchorEntity?.isEnabled = true
             bloodPoolAnchorEntity?.isEnabled = true
@@ -553,82 +567,144 @@ final class ARService: NSObject, ObservableObject {
 
         configureBloodPoolTap()
         hasSpawnedBloodTrail = true
-        print("🩸 [AR] Blood trail spawned — destination: \(destination)")
+        print("🩸 [AR] Blood trail spawned — \(curvedPath.count) steps to \(destination)")
     }
 
-    /// Picks a random floor coordinate `distance` metres from `origin`, clamped to
-    /// a tracked floor plane and away from obstacles.
-    private func randomFloorDestination(from origin: simd_float3, distance: Float) -> simd_float3 {
-        let obstacles: [SpatialMath.FloorObstacle] = obstaclePlanes.values.map { plane in
-            let c = SpatialMath.worldCenter(of: plane)
-            let w = plane.planeExtent.width
-            let h = plane.planeExtent.height
-            let radius = min(0.75, 0.5 * (w * w + h * h).squareRoot())
-            return SpatialMath.FloorObstacle(center: c, radius: radius)
+    private func floorObstacles() -> [SpatialMath.FloorObstacle] {
+        obstaclePlanes.values.map { plane in
+            let center = SpatialMath.worldCenter(of: plane)
+            let extent = plane.planeExtent
+            let radius = min(0.75, 0.5 * (extent.width * extent.width + extent.height * extent.height).squareRoot())
+            return SpatialMath.FloorObstacle(center: center, radius: radius)
         }
+    }
 
-        // Rejection-sample a point at the target distance from origin.
-        for _ in 0..<60 {
+    /// Picks a random floor coordinate `distance` metres from `origin`, away from obstacles.
+    private func randomFloorDestination(
+        from origin: simd_float3,
+        distance: Float,
+        floorY: Float
+    ) -> simd_float3 {
+        let obstacles = floorObstacles()
+
+        for _ in 0..<80 {
             let angle = Float.random(in: 0..<(2 * .pi))
-            let candidate = simd_float3(
-                origin.x + distance * cos(angle),
-                origin.y,
-                origin.z + distance * sin(angle)
+            let candidate = SpatialMath.projectToFloor(
+                simd_float3(
+                    origin.x + distance * cos(angle),
+                    floorY,
+                    origin.z + distance * sin(angle)
+                ),
+                floorY: floorY
             )
-            // Clamp Y to the floor.
-            let floorY = SpatialMath.floorY(from: Array(floorPlanes.values), fallback: origin.y)
-            let clamped = simd_float3(candidate.x, floorY, candidate.z)
 
-            if SpatialMath.isClear(clamped, of: obstacles, clearance: 0.5) {
-                return clamped
+            if SpatialMath.isClear(candidate, of: obstacles, clearance: 0.5) {
+                return candidate
             }
         }
-        return simd_float3(origin.x + distance, origin.y, origin.z)
+
+        return SpatialMath.projectToFloor(
+            simd_float3(origin.x + distance, floorY, origin.z),
+            floorY: floorY
+        )
     }
 
-    /// Creates a trail of textured footprint decals from `start` to `end`.
-    private func spawnFootsteps(from start: simd_float3, to end: simd_float3) -> AnchorEntity {
+    /// Builds interior waypoints that scatter the trail across the room, then
+    /// smooths them into a curved path with Catmull-Rom interpolation.
+    private func generateCurvedFootstepPath(
+        from start: simd_float3,
+        to end: simd_float3,
+        roomRadius: Float,
+        floorY: Float
+    ) -> [simd_float3] {
+        let obstacles = floorObstacles()
+        let travel = simd_float3(end.x - start.x, 0, end.z - start.z)
+        let travelLength = simd_length(travel)
+        let forward = travelLength > 0.001 ? travel / travelLength : simd_float3(0, 0, 1)
+        let right = simd_float3(-forward.z, 0, forward.x)
+
+        let waypointCount = Int.random(in: 4...6)
+        var waypoints: [simd_float3] = [start]
+
+        for index in 1...waypointCount {
+            let progress = Float(index) / Float(waypointCount + 1)
+            let base = start + forward * (travelLength * progress)
+            let lateralSpread = roomRadius * Float.random(in: 0.35...0.85)
+            let lateralSign: Float = Bool.random() ? 1 : -1
+            let forwardJitter = Float.random(in: -roomRadius * 0.2 ... roomRadius * 0.2)
+            let preferred = SpatialMath.projectToFloor(
+                base + right * lateralSpread * lateralSign + forward * forwardJitter,
+                floorY: floorY
+            )
+            let waypoint = RandomnessMath.clearFloorPoint(
+                preferred: preferred,
+                searchRadius: roomRadius * 0.35,
+                obstacles: obstacles,
+                clearance: 0.45,
+                attempts: 50
+            )
+            waypoints.append(SpatialMath.projectToFloor(waypoint, floorY: floorY))
+        }
+
+        waypoints.append(end)
+
+        let densePath = SpatialMath.catmullRomPath(
+            waypoints: waypoints,
+            samplesPerSegment: max(4, Self.footprintStepCount / max(1, waypoints.count - 1))
+        )
+
+        guard densePath.count >= Self.footprintStepCount else { return densePath }
+
+        let stride = Float(densePath.count - 1) / Float(Self.footprintStepCount - 1)
+        return (0..<Self.footprintStepCount).map { index in
+            let sampleIndex = min(densePath.count - 1, Int(round(Float(index) * stride)))
+            return densePath[sampleIndex]
+        }
+    }
+
+    /// Creates a trail of textured footprint decals along a curved floor path.
+    private func spawnFootsteps(along path: [simd_float3]) -> AnchorEntity {
         let anchor = AnchorEntity(world: matrix_identity_float4x4)
         anchor.name = Self.footstepsAnchorName
-        let stepCount = 12
-        let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: 0.14)
-        let material = loadTexturedMaterial(
+        let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: Self.footprintBaseWidth)
+        let material = loadDecalMaterial(
             named: Self.footstepsTextureName,
             fallbackColor: .init(red: 0.4, green: 0.01, blue: 0.02, alpha: 1.0)
         )
 
-        for i in 0..<stepCount {
-            let t = Float(i) / Float(stepCount - 1)
-            let position = simd_float3(
-                start.x + (end.x - start.x) * t,
-                start.y + 0.005,
-                start.z + (end.z - start.z) * t
-            )
+        for index in 0..<path.count {
+            let current = path[index]
+            let previous = path[max(index - 1, 0)]
+            let next = path[min(index + 1, path.count - 1)]
+            let tangent = simd_float3(next.x - previous.x, 0, next.z - previous.z)
+            let tangentLength = simd_length(tangent)
+            let direction = tangentLength > 0.001 ? tangent / tangentLength : simd_float3(0, 0, 1)
+            let sideways = simd_float3(-direction.z, 0, direction.x)
+            let sideOffset = (index % 2 == 0 ? 1.0 : -1.0) * footprintSize.width * 0.28
+
+            var position = current + sideways * sideOffset
+            position.y += Self.footprintFloorOffset
+
             let step = ModelEntity(
                 mesh: .generatePlane(width: footprintSize.width, depth: footprintSize.depth),
                 materials: [material]
             )
-            let dx = end.x - start.x
-            let dz = end.z - start.z
-            if dx != 0 || dz != 0 {
-                let angle = atan2f(dx, dz)
-                step.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
-            }
+            step.orientation = simd_quatf(angle: atan2f(direction.x, direction.z), axis: [0, 1, 0])
             step.position = position
-            step.name = "footstep_\(i)"
+            step.name = "footstep_\(index)"
             anchor.addChild(step)
         }
 
         arView.scene.addAnchor(anchor)
-        print("🩸 [AR] Footsteps trail placed (\(stepCount) steps)")
+        print("🩸 [AR] Footsteps trail placed (\(path.count) steps)")
         return anchor
     }
 
     /// Creates the blood pool decal with collision and input targeting.
     private func makeBloodPoolEntity() -> ModelEntity {
-        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.45)
+        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.58)
         let mesh = MeshResource.generatePlane(width: poolSize.width, depth: poolSize.depth)
-        let material = loadTexturedMaterial(
+        let material = loadDecalMaterial(
             named: Self.bloodPoolTextureName,
             fallbackColor: .init(red: 0.35, green: 0.01, blue: 0.03, alpha: 0.95)
         )
@@ -838,8 +914,7 @@ final class ARService: NSObject, ObservableObject {
 
     /// Loads an unlit textured material from the asset catalog, with a solid-color fallback.
     private func loadTexturedMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
-        guard let image = UIImage(named: assetName),
-              let cgImage = image.cgImage else {
+        guard let cgImage = UIImage(named: assetName)?.cgImage else {
             print("🖼️ [AR] Missing texture '\(assetName)' — using fallback color")
             return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
         }
@@ -856,6 +931,67 @@ final class ARService: NSObject, ObservableObject {
             print("🖼️ [AR] Failed to load texture '\(assetName)': \(error.localizedDescription)")
             return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
         }
+    }
+
+    /// Loads a floor decal texture with alpha blending and dark-pixel removal.
+    private func loadDecalMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
+        guard let source = UIImage(named: assetName)?.cgImage else {
+            print("🖼️ [AR] Missing decal '\(assetName)' — using fallback color")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+
+        let cgImage = cgImageByStrippingDarkBackground(source) ?? source
+
+        do {
+            let texture = try TextureResource.generate(
+                from: cgImage,
+                options: .init(semantic: .color)
+            )
+            var material = UnlitMaterial()
+            material.color = .init(tint: .white, texture: .init(texture))
+            material.blending = .transparent(opacity: .init(scale: 1.0))
+            return material
+        } catch {
+            print("🖼️ [AR] Failed to load decal '\(assetName)': \(error.localizedDescription)")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+    }
+
+    /// Converts near-black pixels to transparent so decal PNGs don't show a square backdrop.
+    private func cgImageByStrippingDarkBackground(_ source: CGImage, threshold: UInt8 = 42) -> CGImage? {
+        let width = source.width
+        let height = source.height
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * width
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return nil }
+
+        let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * bytesPerPixel)
+        for offset in stride(from: 0, to: width * height * bytesPerPixel, by: bytesPerPixel) {
+            let red = pixels[offset]
+            let green = pixels[offset + 1]
+            let blue = pixels[offset + 2]
+            if red <= threshold, green <= threshold, blue <= threshold {
+                pixels[offset] = 0
+                pixels[offset + 1] = 0
+                pixels[offset + 2] = 0
+                pixels[offset + 3] = 0
+            }
+        }
+
+        return context.makeImage()
     }
 
     /// Returns plane width/depth preserving the source image aspect ratio.

@@ -20,7 +20,9 @@ struct GameplayView: View {
             roleOverlay
             keypadOverlay
         }
-        .sheet(isPresented: $presenter.showLetterSheet) {
+        .sheet(isPresented: $presenter.showLetterSheet, onDismiss: {
+            presenter.beginBloodTrailPhase()
+        }) {
             LetterSheetView()
         }
         .onAppear {
