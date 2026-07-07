@@ -37,6 +37,8 @@ struct NetworkEvent: Codable, Sendable {
         case dollTouched = "doll_touched"
         case roleAssignment = "role_assignment"
         case letterSpawn = "letter_spawn"
+        case letterCollected = "letter_collected"
+        case bloodTrailSpawn = "blood_trail_spawn"
         case clueCode = "clue_code"
         case requestBloodTrail = "request_blood_trail"
         case bloodTrailSpawn = "blood_trail_spawn"
@@ -75,6 +77,17 @@ struct NetworkEvent: Codable, Sendable {
     static func letterSpawn(transform: simd_float4x4) -> NetworkEvent {
         let payload = LetterSpawnPayload.encode(transform)
         return NetworkEvent(eventType: EventType.letterSpawn.rawValue, payload: payload)
+    }
+
+    /// Seer → the other device: letter has been read, begin Phase 7.
+    static func letterCollected() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.letterCollected.rawValue, payload: nil)
+    }
+
+    /// Host → Guest: synced blood trail endpoints for Phase 7A.
+    static func bloodTrailSpawn(roomCenter: simd_float3, destination: simd_float3) -> NetworkEvent {
+        let payload = BloodTrailSpawnPayload.encode(roomCenter: roomCenter, destination: destination)
+        return NetworkEvent(eventType: EventType.bloodTrailSpawn.rawValue, payload: payload)
     }
 
     /// Host → Guest: 3-digit clue code for the blood pool puzzle (Phase 7A).
@@ -122,6 +135,25 @@ struct LatencyStats: Equatable, Sendable {
     static let empty = LatencyStats(
         last: nil, average: nil, min: nil, max: nil, count: 0, isLooping: false
     )
+}
+
+/// Encodes room center + destination for the Host → Guest blood trail sync.
+enum BloodTrailSpawnPayload {
+    static func encode(roomCenter: simd_float3, destination: simd_float3) -> String {
+        [roomCenter, destination]
+            .flatMap { [String($0.x), String($0.y), String($0.z)] }
+            .joined(separator: ",")
+    }
+
+    static func decode(_ payload: String?) -> (roomCenter: simd_float3, destination: simd_float3)? {
+        guard let payload else { return nil }
+        let parts = payload.split(separator: ",").compactMap { Float($0) }
+        guard parts.count == 6 else { return nil }
+        return (
+            simd_float3(parts[0], parts[1], parts[2]),
+            simd_float3(parts[3], parts[4], parts[5])
+        )
+    }
 }
 
 /// Encodes a 4×4 letter spawn matrix for the Host → Guest network sync.

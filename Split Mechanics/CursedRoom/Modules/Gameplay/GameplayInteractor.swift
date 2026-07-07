@@ -61,7 +61,7 @@ final class GameplayInteractor: ObservableObject {
         bindSealEvents()
         bindListenerWhisperHints()
         bindClueCodeFromHost()
-        bindBloodTrailSync()
+        bindBloodTrailNetworkSync()
         assignRolesIfNeeded()
         if playerRole != .unassigned {
             beginLetterHunt()
@@ -369,57 +369,54 @@ final class GameplayInteractor: ObservableObject {
         guard playerRole == .seer else { return }
         guard !didSpawnBloodTrail else { return }
 
-        if networkService.role == .host {
-            performAuthoritativeBloodTrailSpawn()
-        } else {
-            networkService.send(.requestBloodTrail())
-            print("🩸 [Gameplay] Guest Seer requested blood trail from Host")
-        }
-
         stopListenerProximityLoop()
+
+        if networkService.role == .host {
+            spawnAndBroadcastBloodTrail()
+        } else {
+            networkService.send(.letterCollected())
+            print("📜 [Gameplay] Guest notified Host — waiting for blood trail sync")
+        }
     }
 
-    private func performAuthoritativeBloodTrailSpawn() {
+    private func spawnAndBroadcastBloodTrail() {
         guard !didSpawnBloodTrail else { return }
-        guard let result = arService.spawnBloodTrailAndPool() else {
-            print("🩸 [Gameplay] Blood trail spawn failed — will retry on next Done tap")
+        guard let endpoints = arService.spawnBloodTrailAndPool() else {
+            print("🩸 [Gameplay] Blood trail spawn failed — no room reference")
             return
         }
 
         didSpawnBloodTrail = true
-        networkService.send(.bloodTrailSpawn(destination: result.destination, bendSide: result.bendSide))
+        networkService.send(.bloodTrailSpawn(
+            roomCenter: endpoints.roomCenter,
+            destination: endpoints.destination
+        ))
         networkService.send(.clueCode(code: clueCode))
-        print("🔢 [Gameplay] Host sent clue code and blood trail sync")
+        print("🔢 [Gameplay] Host sent clue code to Guest")
         print("🩸 [Gameplay] Phase 7 blood trail phase started")
     }
 
-    private func applySyncedBloodTrail(destination: simd_float3, bendSide: Float) {
-        guard !didSpawnBloodTrail else { return }
-        guard arService.spawnBloodTrailAtSyncedDestination(destination, bendSide: bendSide) != nil else {
-            print("🩸 [Gameplay] Synced blood trail spawn failed")
-            return
-        }
-
-        didSpawnBloodTrail = true
-        print("🩸 [Gameplay] Synced blood trail spawned at \(destination)")
-    }
-
-    private func bindBloodTrailSync() {
+    private func bindBloodTrailNetworkSync() {
         networkService.eventPublisher
-            .filter { $0.eventType == NetworkEvent.EventType.requestBloodTrail.rawValue }
+            .filter { $0.eventType == NetworkEvent.EventType.letterCollected.rawValue }
             .sink { [weak self] _ in
                 guard let self, self.networkService.role == .host else { return }
-                self.performAuthoritativeBloodTrailSpawn()
+                self.spawnAndBroadcastBloodTrail()
             }
             .store(in: &cancellables)
 
         networkService.eventPublisher
             .filter { $0.eventType == NetworkEvent.EventType.bloodTrailSpawn.rawValue }
             .sink { [weak self] event in
-                guard let self else { return }
-                guard self.networkService.role == .guest else { return }
-                guard let sync = BloodTrailSpawnPayload.decode(event.payload) else { return }
-                self.applySyncedBloodTrail(destination: sync.destination, bendSide: sync.bendSide)
+                guard let self, self.networkService.role == .guest else { return }
+                guard !self.didSpawnBloodTrail,
+                      let endpoints = BloodTrailSpawnPayload.decode(event.payload) else { return }
+                self.didSpawnBloodTrail = true
+                self.arService.spawnBloodTrailAndPool(
+                    from: endpoints.roomCenter,
+                    to: endpoints.destination
+                )
+                print("🩸 [Gameplay] Guest spawned synced blood trail")
             }
             .store(in: &cancellables)
     }

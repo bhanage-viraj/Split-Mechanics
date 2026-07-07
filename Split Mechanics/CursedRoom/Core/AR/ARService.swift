@@ -519,37 +519,12 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
 
-    struct BloodTrailSpawnResult {
-        let destination: simd_float3
-        let bendSide: Float
-    }
-
-    /// Host authority: picks destination, lays footprints on a curved line, spawns pool.
+    /// Called by the interactor once the letter phase is done. Host picks a
+    /// floor spot ~30% of the room's longest dimension away from the room center,
+    /// spawns a trail of red footsteps and a blood pool at the destination.
     @discardableResult
-    func spawnBloodTrailAndPool() -> BloodTrailSpawnResult? {
-        let bendSide: Float = Bool.random() ? 1 : -1
-        return spawnBloodTrailAndPool(destination: nil, bendSide: bendSide)
-    }
-
-    /// Guest (or Host resync): uses the synced destination and curve direction.
-    @discardableResult
-    func spawnBloodTrailAtSyncedDestination(
-        _ destination: simd_float3,
-        bendSide: Float
-    ) -> BloodTrailSpawnResult? {
-        spawnBloodTrailAndPool(destination: destination, bendSide: bendSide)
-    }
-
-    @discardableResult
-    private func spawnBloodTrailAndPool(
-        destination syncedDestination: simd_float3?,
-        bendSide: Float
-    ) -> BloodTrailSpawnResult? {
+    func spawnBloodTrailAndPool() -> (roomCenter: simd_float3, destination: simd_float3)? {
         guard !hasSpawnedBloodTrail else { return nil }
-        guard let floorY = resolvedFloorY() else {
-            print("🩸 [AR] No floor height — skipping blood trail")
-            return nil
-        }
 
         let trailStart: simd_float3
         if let letterPosition = letterWorldPosition {
@@ -560,33 +535,23 @@ final class ARService: NSObject, ObservableObject {
                 floorY: floorY
             )
         } else {
-            print("🩸 [AR] No trail start — skipping blood trail")
+            print("🩸 [AR] No room reference — skipping blood trail")
             return nil
         }
 
-        let destination: simd_float3
-        if let syncedDestination {
-            destination = SpatialMath.projectToFloor(syncedDestination, floorY: floorY)
-        } else {
-            let maxDimension: Float = floorPlanes.values
-                .map { max($0.planeExtent.width, $0.planeExtent.height) }
-                .max() ?? 3.0
-            let walkDistance = max(1.4, maxDimension * Self.bloodTrailWalkFraction)
-            destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
-        }
+        let maxDimension: Float = floorPlanes.values.map { max($0.planeExtent.width, $0.planeExtent.height) }.max() ?? 2.0
+        let walkDistance = maxDimension * Self.bloodTrailWalkFraction
+        let destination = randomFloorDestination(from: roomCenter, distance: walkDistance)
 
-        let curvedPath = generateCurvedFootstepPath(
-            from: trailStart,
-            to: destination,
-            floorY: floorY,
-            bendSide: bendSide
-        )
-        guard !curvedPath.isEmpty else {
-            print("🩸 [AR] Empty footprint path — skipping blood trail")
-            return nil
-        }
+        spawnBloodTrailAndPool(from: roomCenter, to: destination)
+        return (roomCenter, destination)
+    }
 
-        footstepsAnchorEntity = spawnFootsteps(along: curvedPath, floorY: floorY)
+    /// Places the blood trail at synced world coordinates (Guest receives from Host).
+    func spawnBloodTrailAndPool(from roomCenter: simd_float3, to destination: simd_float3) {
+        guard !hasSpawnedBloodTrail else { return }
+
+        footstepsAnchorEntity = spawnFootsteps(from: roomCenter, to: destination)
 
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
         let poolEntity = makeBloodPoolEntity()
@@ -915,23 +880,45 @@ final class ARService: NSObject, ObservableObject {
     // MARK: - Textured AR Billboards
 
     /// Loads an unlit textured material from the asset catalog, with a solid-color fallback.
+    /// Transparent PNG regions are rendered correctly (no black fill) via alpha blending.
     private func loadTexturedMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
-        guard let cgImage = UIImage(named: assetName)?.cgImage else {
+        guard let image = UIImage(named: assetName)?.withRenderingMode(.alwaysOriginal),
+              let cgImage = image.cgImage else {
             print("🖼️ [AR] Missing texture '\(assetName)' — using fallback color")
-            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), roughness: 0.8, isMetallic: false)
         }
 
+        let hasAlpha = imageHasAlpha(cgImage)
+
         do {
-            let texture = try TextureResource.generate(
-                from: cgImage,
+            let texture = try TextureResource(
+                image: cgImage,
                 options: .init(semantic: .color)
             )
+
             var material = UnlitMaterial()
-            material.color = .init(tint: .white, texture: .init(texture))
+            // Slightly transparent tint forces RealityKit to honour the texture alpha channel.
+            material.color = .init(
+                tint: hasAlpha ? .white.withAlphaComponent(0.9999) : .white,
+                texture: .init(texture)
+            )
+            if hasAlpha {
+                material.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            }
+            material.faceCulling = .none
             return material
         } catch {
             print("🖼️ [AR] Failed to load texture '\(assetName)': \(error.localizedDescription)")
-            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), roughness: 0.8, isMetallic: false)
+        }
+    }
+
+    private func imageHasAlpha(_ cgImage: CGImage) -> Bool {
+        switch cgImage.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        default:
+            return true
         }
     }
 

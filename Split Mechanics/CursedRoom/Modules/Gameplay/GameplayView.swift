@@ -21,7 +21,9 @@ struct GameplayView: View {
             keypadOverlay
         }
         .sheet(isPresented: $presenter.showLetterSheet) {
-            LetterSheetView(onDone: presenter.dismissLetterAndBeginTrail)
+            LetterSheetView {
+                presenter.dismissLetterAndBeginPhase7()
+            }
         }
         .onAppear {
             presenter.onAppear()
@@ -242,38 +244,36 @@ struct LetterSheetView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 24) {
+                Spacer()
+
                 Text("📜 Hidden Letter")
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text(
-                    "To break the curse, you must find the two pieces of the ancient seal. "
-                    + "Only when the seal is restored will the monster lose its power."
-                )
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-
-                Text("Follow the bloody trail…")
-                    .font(.title3)
-                    .foregroundStyle(.red.opacity(0.85))
+                Text("Hello")
+                    .font(.title)
+                    .foregroundStyle(.primary)
 
                 Spacer()
 
-                Button(action: onDone) {
-                    Text("Done")
-                        .font(.headline.bold())
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
+                Button("Done") {
+                    onDone()
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 12)
+                .font(.headline.bold())
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(
+                    LinearGradient(
+                        colors: [.blue, .blue.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .padding(.horizontal, 32)
+                .padding(.bottom, 32)
             }
             .navigationTitle("Clue")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
