@@ -82,11 +82,10 @@ final class GameplayInteractor: ObservableObject {
         guard !didAssignRoles, playerRole == .unassigned else { return }
 
         if networkService.role == .host {
-            let isHostSeer = Bool.random()
-            playerRole = isHostSeer ? .seer : .listener
+            playerRole = .seer
             didAssignRoles = true
-            networkService.send(.roleAssignment(hostIsSeer: isHostSeer))
-            print("🎭 [Gameplay] Host assigned — local role: \(playerRole.rawValue)")
+            networkService.send(.roleAssignment(hostIsSeer: true))
+            print("🎭 [Gameplay] Host assigned — local role: seer")
         } else if let event = networkService.latestEvent(ofType: .roleAssignment) {
             applyGuestRole(from: event.payload)
         }
