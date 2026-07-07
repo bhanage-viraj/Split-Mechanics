@@ -506,11 +506,12 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
 
-    /// Called by the interactor once the letter phase is done. Host only: picks a
+    /// Called by the interactor once the letter phase is done. Host picks a
     /// floor spot ~30% of the room's longest dimension away from the room center,
     /// spawns a trail of red footsteps and a blood pool at the destination.
-    func spawnBloodTrailAndPool() {
-        guard !hasSpawnedBloodTrail else { return }
+    @discardableResult
+    func spawnBloodTrailAndPool() -> (roomCenter: simd_float3, destination: simd_float3)? {
+        guard !hasSpawnedBloodTrail else { return nil }
 
         let roomCenter: simd_float3
         if let firstFloor = floorPlanes.values.first {
@@ -519,20 +520,23 @@ final class ARService: NSObject, ObservableObject {
             roomCenter = SpatialMath.cameraPosition(from: frame)
         } else {
             print("🩸 [AR] No room reference — skipping blood trail")
-            return
+            return nil
         }
 
-        // Compute room radius: longest horizontal extent among floor planes.
         let maxDimension: Float = floorPlanes.values.map { max($0.planeExtent.width, $0.planeExtent.height) }.max() ?? 2.0
         let walkDistance = maxDimension * Self.bloodTrailWalkFraction
-
-        // Pick a destination away from the room center (rejection sample).
         let destination = randomFloorDestination(from: roomCenter, distance: walkDistance)
 
-        // Spawn footsteps trail.
+        spawnBloodTrailAndPool(from: roomCenter, to: destination)
+        return (roomCenter, destination)
+    }
+
+    /// Places the blood trail at synced world coordinates (Guest receives from Host).
+    func spawnBloodTrailAndPool(from roomCenter: simd_float3, to destination: simd_float3) {
+        guard !hasSpawnedBloodTrail else { return }
+
         footstepsAnchorEntity = spawnFootsteps(from: roomCenter, to: destination)
 
-        // Spawn blood pool at the destination.
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
         let poolEntity = makeBloodPoolEntity()
         poolAnchor.addChild(poolEntity)
@@ -540,8 +544,6 @@ final class ARService: NSObject, ObservableObject {
         bloodPoolAnchorEntity = poolAnchor
         bloodPoolWorldPosition = destination
 
-        // Asymmetrical visibility: only the Seer can see the blood trail.
-        // The Listener gets the whisper audio entity instead.
         if localPlayerRole == .seer {
             footstepsAnchorEntity?.isEnabled = true
             bloodPoolAnchorEntity?.isEnabled = true
@@ -837,24 +839,45 @@ final class ARService: NSObject, ObservableObject {
     // MARK: - Textured AR Billboards
 
     /// Loads an unlit textured material from the asset catalog, with a solid-color fallback.
+    /// Transparent PNG regions are rendered correctly (no black fill) via alpha blending.
     private func loadTexturedMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
-        guard let image = UIImage(named: assetName),
+        guard let image = UIImage(named: assetName)?.withRenderingMode(.alwaysOriginal),
               let cgImage = image.cgImage else {
             print("🖼️ [AR] Missing texture '\(assetName)' — using fallback color")
-            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), roughness: 0.8, isMetallic: false)
         }
 
+        let hasAlpha = imageHasAlpha(cgImage)
+
         do {
-            let texture = try TextureResource.generate(
-                from: cgImage,
+            let texture = try TextureResource(
+                image: cgImage,
                 options: .init(semantic: .color)
             )
+
             var material = UnlitMaterial()
-            material.color = .init(tint: .white, texture: .init(texture))
+            // Slightly transparent tint forces RealityKit to honour the texture alpha channel.
+            material.color = .init(
+                tint: hasAlpha ? .white.withAlphaComponent(0.9999) : .white,
+                texture: .init(texture)
+            )
+            if hasAlpha {
+                material.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            }
+            material.faceCulling = .none
             return material
         } catch {
             print("🖼️ [AR] Failed to load texture '\(assetName)': \(error.localizedDescription)")
-            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), roughness: 0.8, isMetallic: false)
+        }
+    }
+
+    private func imageHasAlpha(_ cgImage: CGImage) -> Bool {
+        switch cgImage.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        default:
+            return true
         }
     }
 

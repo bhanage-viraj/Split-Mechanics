@@ -21,7 +21,9 @@ struct GameplayView: View {
             keypadOverlay
         }
         .sheet(isPresented: $presenter.showLetterSheet) {
-            LetterSheetView()
+            LetterSheetView {
+                presenter.dismissLetterAndBeginPhase7()
+            }
         }
         .onAppear {
             presenter.onAppear()
@@ -237,29 +239,41 @@ private struct KeypadActionButton: View {
 // MARK: - Letter Sheet
 
 struct LetterSheetView: View {
-    @Environment(\.dismiss) private var dismiss
+    let onDone: () -> Void
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
+            VStack(spacing: 24) {
+                Spacer()
+
                 Text("📜 Hidden Letter")
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Follow the trail…")
+                Text("Hello")
                     .font(.title)
-                    .foregroundColor(.gray)
+                    .foregroundStyle(.primary)
 
                 Spacer()
+
+                Button("Done") {
+                    onDone()
+                }
+                .font(.headline.bold())
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(
+                    LinearGradient(
+                        colors: [.blue, .blue.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .padding(.horizontal, 32)
+                .padding(.bottom, 32)
             }
             .navigationTitle("Clue")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
-            }
         }
     }
 }
