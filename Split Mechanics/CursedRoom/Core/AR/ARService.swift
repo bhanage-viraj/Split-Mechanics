@@ -126,6 +126,13 @@ final class ARService: NSObject, ObservableObject {
     private static let whisperAudioSubdirectory = "Sounds"
     private static let bloodTrailWalkFraction: Float = 0.30   // 30% of the room's longest floor dimension
 
+    // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
+
+    private static let letterTextureName = "letter"
+    private static let footstepsTextureName = "footsteps"
+    private static let bloodPoolTextureName = "blood pool (hint1)"
+    private static let sealTextureName = "sealbox(with seal)"
+
     // MARK: - Init
 
     override init() {
@@ -579,25 +586,28 @@ final class ARService: NSObject, ObservableObject {
         return simd_float3(origin.x + distance, origin.y, origin.z)
     }
 
-    /// Creates a trail of small red squares from `start` to `end`.
+    /// Creates a trail of textured footprint decals from `start` to `end`.
     private func spawnFootsteps(from start: simd_float3, to end: simd_float3) -> AnchorEntity {
         let anchor = AnchorEntity(world: matrix_identity_float4x4)
+        anchor.name = Self.footstepsAnchorName
         let stepCount = 12
-        let stepSize: Float = 0.04
-        let material = SimpleMaterial(color: .init(red: 0.4, green: 0.01, blue: 0.02, alpha: 1.0), isMetallic: false)
+        let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: 0.14)
+        let material = loadTexturedMaterial(
+            named: Self.footstepsTextureName,
+            fallbackColor: .init(red: 0.4, green: 0.01, blue: 0.02, alpha: 1.0)
+        )
 
         for i in 0..<stepCount {
             let t = Float(i) / Float(stepCount - 1)
             let position = simd_float3(
                 start.x + (end.x - start.x) * t,
-                start.y + 0.005,   // slightly above floor to avoid z-fighting
+                start.y + 0.005,
                 start.z + (end.z - start.z) * t
             )
             let step = ModelEntity(
-                mesh: .generatePlane(width: stepSize, depth: stepSize * 0.7),
+                mesh: .generatePlane(width: footprintSize.width, depth: footprintSize.depth),
                 materials: [material]
             )
-            // Face the direction of travel.
             let dx = end.x - start.x
             let dz = end.z - start.z
             if dx != 0 || dz != 0 {
@@ -614,12 +624,13 @@ final class ARService: NSObject, ObservableObject {
         return anchor
     }
 
-    /// Creates the dark red blood pool plane with collision and input targeting.
+    /// Creates the blood pool decal with collision and input targeting.
     private func makeBloodPoolEntity() -> ModelEntity {
-        let mesh = MeshResource.generatePlane(width: 0.35, depth: 0.35)
-        let material = SimpleMaterial(
-            color: .init(red: 0.35, green: 0.01, blue: 0.03, alpha: 0.95),
-            isMetallic: false
+        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.45)
+        let mesh = MeshResource.generatePlane(width: poolSize.width, depth: poolSize.depth)
+        let material = loadTexturedMaterial(
+            named: Self.bloodPoolTextureName,
+            fallbackColor: .init(red: 0.35, green: 0.01, blue: 0.03, alpha: 0.95)
         )
         let pool = ModelEntity(mesh: mesh, materials: [material])
         pool.name = Self.bloodPoolEntityName
@@ -720,28 +731,22 @@ final class ARService: NSObject, ObservableObject {
         print("✨ [AR] First Seal revealed")
     }
 
-    /// Creates the glowing blue seal placeholder entity.
+    /// Creates the first seal using the sealbox texture from the asset catalog.
     private func makeFirstSealEntity() -> ModelEntity {
-        let mesh = MeshResource.generatePlane(width: 0.25, depth: 0.25)
-        let material = SimpleMaterial(
-            color: .init(red: 0.1, green: 0.5, blue: 1.0, alpha: 1.0),
-            roughness: 0.2,
-            isMetallic: true
+        let sealSize = planeSize(for: Self.sealTextureName, baseWidth: 0.32)
+        let mesh = MeshResource.generatePlane(width: sealSize.width, depth: sealSize.depth)
+        let material = loadTexturedMaterial(
+            named: Self.sealTextureName,
+            fallbackColor: .init(red: 0.1, green: 0.5, blue: 1.0, alpha: 1.0)
         )
         let seal = ModelEntity(mesh: mesh, materials: [material])
         seal.name = Self.bloodPoolWithSealName
         seal.generateCollisionShapes(recursive: true)
         seal.components.set(InputTargetComponent())
 
-        // Pulse animation using RealityKit's built-in animation system.
-        var transform = seal.transform
-        transform.scale = SIMD3<Float>(1.0, 1.0, 1.0)
-        seal.transform = transform
-
-        // Simple scale pulse via async animation loop.
         Task { @MainActor in
             let baseScale: Float = 1.0
-            let pulseRange: Float = 0.15
+            let pulseRange: Float = 0.12
             let speed: Float = 2.0
             let startTime = CACurrentMediaTime()
             while seal.scene != nil {
@@ -802,8 +807,12 @@ final class ARService: NSObject, ObservableObject {
     }
 
     private func makeLetterVisual() -> ModelEntity {
-        let mesh = MeshResource.generatePlane(width: 0.2, depth: 0.2)
-        let material = SimpleMaterial(color: .white, isMetallic: false)
+        let letterSize = planeSize(for: Self.letterTextureName, baseWidth: 0.28)
+        let mesh = MeshResource.generatePlane(width: letterSize.width, depth: letterSize.depth)
+        let material = loadTexturedMaterial(
+            named: Self.letterTextureName,
+            fallbackColor: .white
+        )
         let letter = ModelEntity(mesh: mesh, materials: [material])
         letter.name = Self.letterEntityName
         letter.generateCollisionShapes(recursive: true)
@@ -823,6 +832,39 @@ final class ARService: NSObject, ObservableObject {
               entity.name == Self.letterEntityName else { return }
         print("📜 [AR] Letter tapped by Seer")
         letterTapped.send(())
+    }
+
+    // MARK: - Textured AR Billboards
+
+    /// Loads an unlit textured material from the asset catalog, with a solid-color fallback.
+    private func loadTexturedMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
+        guard let image = UIImage(named: assetName),
+              let cgImage = image.cgImage else {
+            print("🖼️ [AR] Missing texture '\(assetName)' — using fallback color")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+
+        do {
+            let texture = try TextureResource.generate(
+                from: cgImage,
+                options: .init(semantic: .color)
+            )
+            var material = UnlitMaterial()
+            material.color = .init(tint: .white, texture: .init(texture))
+            return material
+        } catch {
+            print("🖼️ [AR] Failed to load texture '\(assetName)': \(error.localizedDescription)")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+    }
+
+    /// Returns plane width/depth preserving the source image aspect ratio.
+    private func planeSize(for assetName: String, baseWidth: Float) -> (width: Float, depth: Float) {
+        guard let image = UIImage(named: assetName), image.size.height > 0 else {
+            return (baseWidth, baseWidth)
+        }
+        let aspect = Float(image.size.width / image.size.height)
+        return (baseWidth, baseWidth / aspect)
     }
 
     // MARK: - Doll Rendering (both devices)
