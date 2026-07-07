@@ -364,8 +364,9 @@ final class GameplayInteractor: ObservableObject {
 
     // MARK: - Blood Trail Spawning (triggered after letter phase)
 
-    /// Call this after the letter is collected to start Phase 7A.
+    /// Call this after the Seer dismisses the letter sheet to start Phase 7A.
     func beginBloodTrailPhase() {
+        guard playerRole == .seer else { return }
         guard !didSpawnBloodTrail else { return }
 
         stopListenerProximityLoop()

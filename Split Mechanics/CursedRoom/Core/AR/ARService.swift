@@ -90,7 +90,7 @@ final class ARService: NSObject, ObservableObject {
     private var wantsLetter = false
     private var letterAnchorAdded = false
     private var letterAnchorEntity: AnchorEntity?
-    private var letterAudioController: AudioPlaybackController?
+    private var letterAudioHandle: SpatialAudioEmitter.Handle?
     private var pendingLetterAnchor: ARAnchor?
     private var pendingLetterTransform: simd_float4x4?
 
@@ -98,7 +98,7 @@ final class ARService: NSObject, ObservableObject {
 
     private var bloodPoolAnchorEntity: AnchorEntity?
     private var footstepsAnchorEntity: AnchorEntity?
-    private var whisperAudioController: AudioPlaybackController?
+    private var whisperAudioHandle: SpatialAudioEmitter.Handle?
     private var hasSpawnedBloodTrail = false
 
     private static let dollAnchorName = "cursed_doll_anchor"
@@ -124,7 +124,11 @@ final class ARService: NSObject, ObservableObject {
     private static let whisperAudioName = "BGM"
     private static let whisperAudioExtension = "mp3"
     private static let whisperAudioSubdirectory = "Sounds"
-    private static let bloodTrailWalkFraction: Float = 0.30   // 30% of the room's longest floor dimension
+    private static let bloodTrailWalkFraction: Float = 0.40
+    private static let footprintBaseWidth: Float = 0.32
+    private static let footprintStepSpacing: Float = 0.42
+    private static let footprintMaxLateralBend: Float = 0.30
+    private static let footprintFloorOffset: Float = 0.006
 
     // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
 
@@ -471,7 +475,7 @@ final class ARService: NSObject, ObservableObject {
         isLetterSpawned = true
         letterWorldPosition = worldPosition
 
-        attachLetterContent(to: anchorEntity, for: role)
+        attachLetterContent(to: anchorEntity, for: role, worldPosition: worldPosition)
 
         statusMessage = role == .listener
             ? "Listen… something is calling from the walls."
@@ -479,7 +483,11 @@ final class ARService: NSObject, ObservableObject {
         print("📜 [AR] Letter spawned for \(role.rawValue) at \(worldPosition)")
     }
 
-    private func attachLetterContent(to anchorEntity: AnchorEntity, for role: PlayerRole) {
+    private func attachLetterContent(
+        to anchorEntity: AnchorEntity,
+        for role: PlayerRole,
+        worldPosition: simd_float3
+    ) {
         switch role {
         case .seer:
             // Seer sees the letter; no spatial audio (they must rely on the Listener).
@@ -488,16 +496,21 @@ final class ARService: NSObject, ObservableObject {
             configureLetterTap()
 
         case .listener:
-            // Listener cannot see the letter — only hears it via RealityKit spatial audio.
-            let listenerAudio = Entity()
-            listenerAudio.name = Self.letterEntityName + "_listener"
-            anchorEntity.addChild(listenerAudio)
-            listenerAudio.components.set(SpatialAudioComponent(
-                gain: Audio.Decibel(-3),
-                directivity: .beam(focus: 0),
-                distanceAttenuation: .rolloff(factor: 1.0)
-            ))
-            Task { await self.startLetterSpatialAudio(on: listenerAudio) }
+            // Pin audio to the exact letter world position — not the anchor rotation.
+            Task { [weak self] in
+                guard let self, self.letterAudioHandle == nil else { return }
+                self.letterAudioHandle = await self.playSpatialClueAudio(
+                    resourceName: Self.letterAudioName,
+                    fileExtension: Self.letterAudioExtension,
+                    subdirectory: Self.letterAudioSubdirectory,
+                    at: worldPosition,
+                    config: .init(
+                        gain: Audio.Decibel(-3),
+                        rolloffFactor: 1.0,
+                        entityName: Self.letterEntityName + "_listener_audio"
+                    )
+                )
+            }
 
         case .unassigned:
             break
@@ -513,11 +526,14 @@ final class ARService: NSObject, ObservableObject {
     func spawnBloodTrailAndPool() -> (roomCenter: simd_float3, destination: simd_float3)? {
         guard !hasSpawnedBloodTrail else { return nil }
 
-        let roomCenter: simd_float3
-        if let firstFloor = floorPlanes.values.first {
-            roomCenter = SpatialMath.worldCenter(of: firstFloor)
+        let trailStart: simd_float3
+        if let letterPosition = letterWorldPosition {
+            trailStart = SpatialMath.projectToFloor(letterPosition, floorY: floorY)
         } else if let frame = arView.session.currentFrame {
-            roomCenter = SpatialMath.cameraPosition(from: frame)
+            trailStart = SpatialMath.projectToFloor(
+                SpatialMath.cameraPosition(from: frame),
+                floorY: floorY
+            )
         } else {
             print("🩸 [AR] No room reference — skipping blood trail")
             return nil
@@ -555,82 +571,139 @@ final class ARService: NSObject, ObservableObject {
 
         configureBloodPoolTap()
         hasSpawnedBloodTrail = true
-        print("🩸 [AR] Blood trail spawned — destination: \(destination)")
+        print("🩸 [AR] Blood trail spawned — \(curvedPath.count) steps to \(destination)")
+        return BloodTrailSpawnResult(destination: destination, bendSide: bendSide)
     }
 
-    /// Picks a random floor coordinate `distance` metres from `origin`, clamped to
-    /// a tracked floor plane and away from obstacles.
-    private func randomFloorDestination(from origin: simd_float3, distance: Float) -> simd_float3 {
-        let obstacles: [SpatialMath.FloorObstacle] = obstaclePlanes.values.map { plane in
-            let c = SpatialMath.worldCenter(of: plane)
-            let w = plane.planeExtent.width
-            let h = plane.planeExtent.height
-            let radius = min(0.75, 0.5 * (w * w + h * h).squareRoot())
-            return SpatialMath.FloorObstacle(center: c, radius: radius)
+    private func resolvedFloorY() -> Float? {
+        if !floorPlanes.isEmpty {
+            return SpatialMath.floorY(from: Array(floorPlanes.values), fallback: 0)
         }
+        if let letterPosition = letterWorldPosition {
+            return letterPosition.y - SpatialMath.letterHeightAboveFloor
+        }
+        if let frame = arView.session.currentFrame {
+            return SpatialMath.cameraPosition(from: frame).y - SpatialMath.letterHeightAboveFloor
+        }
+        return nil
+    }
 
-        // Rejection-sample a point at the target distance from origin.
-        for _ in 0..<60 {
+    private func floorObstacles() -> [SpatialMath.FloorObstacle] {
+        obstaclePlanes.values.map { plane in
+            let center = SpatialMath.worldCenter(of: plane)
+            let extent = plane.planeExtent
+            let radius = min(0.75, 0.5 * (extent.width * extent.width + extent.height * extent.height).squareRoot())
+            return SpatialMath.FloorObstacle(center: center, radius: radius)
+        }
+    }
+
+    /// Picks a random floor coordinate `distance` metres from `origin`, away from obstacles.
+    private func randomFloorDestination(
+        from origin: simd_float3,
+        distance: Float,
+        floorY: Float
+    ) -> simd_float3 {
+        let obstacles = floorObstacles()
+
+        for _ in 0..<80 {
             let angle = Float.random(in: 0..<(2 * .pi))
-            let candidate = simd_float3(
-                origin.x + distance * cos(angle),
-                origin.y,
-                origin.z + distance * sin(angle)
+            let candidate = SpatialMath.projectToFloor(
+                simd_float3(
+                    origin.x + distance * cos(angle),
+                    floorY,
+                    origin.z + distance * sin(angle)
+                ),
+                floorY: floorY
             )
-            // Clamp Y to the floor.
-            let floorY = SpatialMath.floorY(from: Array(floorPlanes.values), fallback: origin.y)
-            let clamped = simd_float3(candidate.x, floorY, candidate.z)
 
-            if SpatialMath.isClear(clamped, of: obstacles, clearance: 0.5) {
-                return clamped
+            if SpatialMath.isClear(candidate, of: obstacles, clearance: 0.5) {
+                return candidate
             }
         }
-        return simd_float3(origin.x + distance, origin.y, origin.z)
+
+        return SpatialMath.projectToFloor(
+            simd_float3(origin.x + distance, floorY, origin.z),
+            floorY: floorY
+        )
     }
 
-    /// Creates a trail of textured footprint decals from `start` to `end`.
-    private func spawnFootsteps(from start: simd_float3, to end: simd_float3) -> AnchorEntity {
-        let anchor = AnchorEntity(world: matrix_identity_float4x4)
+    /// Lays footsteps on a single curved Bézier arc from the letter to the blood pool.
+    private func generateCurvedFootstepPath(
+        from start: simd_float3,
+        to end: simd_float3,
+        floorY: Float,
+        bendSide: Float
+    ) -> [simd_float3] {
+        let startPoint = SpatialMath.projectToFloor(start, floorY: floorY)
+        let endPoint = SpatialMath.projectToFloor(end, floorY: floorY)
+        let travel = simd_float3(endPoint.x - startPoint.x, 0, endPoint.z - startPoint.z)
+        let travelLength = simd_length(travel)
+
+        guard travelLength > 0.15 else {
+            return [startPoint, endPoint]
+        }
+
+        let forward = travel / travelLength
+        let right = simd_float3(-forward.z, 0, forward.x)
+        let midpoint = (startPoint + endPoint) * 0.5
+        let control = SpatialMath.projectToFloor(
+            midpoint + right * (Self.footprintMaxLateralBend * bendSide),
+            floorY: floorY
+        )
+        let stepCount = max(8, min(22, Int(travelLength / Self.footprintStepSpacing) + 1))
+
+        return SpatialMath.quadraticBezierPath(
+            from: startPoint,
+            control: control,
+            to: endPoint,
+            stepCount: stepCount
+        )
+    }
+
+    /// Creates a trail of textured footprint decals along a curved floor path.
+    private func spawnFootsteps(along path: [simd_float3], floorY: Float) -> AnchorEntity {
+        let anchor = AnchorEntity(world: SpatialMath.translation(path[0]))
         anchor.name = Self.footstepsAnchorName
-        let stepCount = 12
-        let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: 0.14)
-        let material = loadTexturedMaterial(
+        let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: Self.footprintBaseWidth)
+        let material = loadDecalMaterial(
             named: Self.footstepsTextureName,
             fallbackColor: .init(red: 0.4, green: 0.01, blue: 0.02, alpha: 1.0)
         )
 
-        for i in 0..<stepCount {
-            let t = Float(i) / Float(stepCount - 1)
-            let position = simd_float3(
-                start.x + (end.x - start.x) * t,
-                start.y + 0.005,
-                start.z + (end.z - start.z) * t
-            )
+        for index in 0..<path.count {
+            let current = path[index]
+            let previous = path[max(index - 1, 0)]
+            let next = path[min(index + 1, path.count - 1)]
+            let tangent = simd_float3(next.x - previous.x, 0, next.z - previous.z)
+            let tangentLength = simd_length(tangent)
+            let direction = tangentLength > 0.001 ? tangent / tangentLength : simd_float3(0, 0, 1)
+            let sideways = simd_float3(-direction.z, 0, direction.x)
+            let sideOffset = (index % 2 == 0 ? 1.0 : -1.0) * footprintSize.width * 0.28
+
+            var position = current + sideways * sideOffset
+            position.y = floorY + Self.footprintFloorOffset
+            position -= path[0]
+
             let step = ModelEntity(
                 mesh: .generatePlane(width: footprintSize.width, depth: footprintSize.depth),
                 materials: [material]
             )
-            let dx = end.x - start.x
-            let dz = end.z - start.z
-            if dx != 0 || dz != 0 {
-                let angle = atan2f(dx, dz)
-                step.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
-            }
+            step.orientation = simd_quatf(angle: atan2f(direction.x, direction.z), axis: [0, 1, 0])
             step.position = position
-            step.name = "footstep_\(i)"
+            step.name = "footstep_\(index)"
             anchor.addChild(step)
         }
 
         arView.scene.addAnchor(anchor)
-        print("🩸 [AR] Footsteps trail placed (\(stepCount) steps)")
+        print("🩸 [AR] Footsteps trail placed (\(path.count) steps)")
         return anchor
     }
 
     /// Creates the blood pool decal with collision and input targeting.
     private func makeBloodPoolEntity() -> ModelEntity {
-        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.45)
+        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.58)
         let mesh = MeshResource.generatePlane(width: poolSize.width, depth: poolSize.depth)
-        let material = loadTexturedMaterial(
+        let material = loadDecalMaterial(
             named: Self.bloodPoolTextureName,
             fallbackColor: .init(red: 0.35, green: 0.01, blue: 0.03, alpha: 0.95)
         )
@@ -669,41 +742,21 @@ final class ARService: NSObject, ObservableObject {
     /// an invisible entity at the blood pool destination with aggressive spatial
     /// audio attenuation so the Listener must physically walk to find it.
     func spawnWhisperAudio(at destination: simd_float3) {
-        let whisperAnchor = AnchorEntity(world: SpatialMath.translation(destination))
-        let whisperEntity = Entity()
-        whisperEntity.name = Self.whisperEntityName
-        whisperAnchor.addChild(whisperEntity)
-
-        whisperEntity.components.set(SpatialAudioComponent(
-            gain: Audio.Decibel(-3),
-            directivity: .beam(focus: 0),
-            distanceAttenuation: .rolloff(factor: 2.0)
-        ))
-
-        arView.scene.addAnchor(whisperAnchor)
-
-        Task { await self.startWhisperSpatialAudio(on: whisperEntity) }
-        print("🩸 [AR] Whisper audio placed — aggressive attenuation (ref: 0.2m, max: 4.0m)")
-    }
-
-    /// Loads BGM.mp3 and loops it from the invisible whisper entity.
-    private func startWhisperSpatialAudio(on entity: Entity) async {
-        guard whisperAudioController == nil else { return }
-        guard let url = whisperAudioURL() else {
-            print("🩸 [AR] Whisper audio not found in bundle")
-            return
-        }
-
-        do {
-            let resource = try await AudioFileResource(
-                contentsOf: url,
-                configuration: .init(shouldLoop: true)
+        Task { [weak self] in
+            guard let self, self.whisperAudioHandle == nil else { return }
+            self.whisperAudioHandle = await self.playSpatialClueAudio(
+                resourceName: Self.whisperAudioName,
+                fileExtension: Self.whisperAudioExtension,
+                subdirectory: Self.whisperAudioSubdirectory,
+                at: destination,
+                config: .init(
+                    gain: Audio.Decibel(-3),
+                    rolloffFactor: 2.0,
+                    entityName: Self.whisperEntityName
+                )
             )
-            whisperAudioController = entity.playAudio(resource)
-            print("🩸 [AR] Whisper spatial audio playing (BGM.mp3)")
-        } catch {
-            print("🩸 [AR] Failed to load whisper audio: \(error.localizedDescription)")
         }
+        print("🩸 [AR] Whisper audio placed at \(destination)")
     }
 
     // MARK: - Phase 7C — First Seal Reveal
@@ -714,8 +767,8 @@ final class ARService: NSObject, ObservableObject {
         bloodPoolAnchorEntity = nil
         footstepsAnchorEntity.map { arView.scene.removeAnchor($0) }
         footstepsAnchorEntity = nil
-        whisperAudioController?.stop()
-        whisperAudioController = nil
+        whisperAudioHandle?.stop(in: arView.scene)
+        whisperAudioHandle = nil
         bloodPoolWorldPosition = nil
         hasSpawnedBloodTrail = false
         print("🩸 [AR] Blood trail entities removed")
@@ -762,56 +815,44 @@ final class ARService: NSObject, ObservableObject {
         return seal
     }
 
-    // MARK: - Audio URL Helper
+    // MARK: - Spatial Audio
 
-    private func whisperAudioURL() -> URL? {
-        let bundle = Bundle.main
-        return bundle.url(
-            forResource: Self.whisperAudioName,
-            withExtension: Self.whisperAudioExtension,
-            subdirectory: Self.whisperAudioSubdirectory
-        ) ?? bundle.url(
-            forResource: Self.whisperAudioName,
-            withExtension: Self.whisperAudioExtension
-        )
-    }
-
-    private func letterAudioURL() -> URL? {
-        let bundle = Bundle.main
-        return bundle.url(
-            forResource: Self.letterAudioName,
-            withExtension: Self.letterAudioExtension,
-            subdirectory: Self.letterAudioSubdirectory
-        ) ?? bundle.url(
-            forResource: Self.letterAudioName,
-            withExtension: Self.letterAudioExtension
-        )
-    }
-
-    /// Loads BGM.mp3 and loops it from the invisible listener-only audio entity.
-    private func startLetterSpatialAudio(on entity: Entity) async {
-        guard letterAudioController == nil else { return }
-        guard let url = letterAudioURL() else {
-            print("📜 [AR] Letter audio not found in bundle")
-            return
+    /// Starts looping spatial audio at an exact world coordinate.
+    private func playSpatialClueAudio(
+        resourceName: String,
+        fileExtension: String,
+        subdirectory: String?,
+        at worldPosition: simd_float3,
+        config: SpatialAudioEmitter.Config
+    ) async -> SpatialAudioEmitter.Handle? {
+        guard let url = SpatialAudioEmitter.bundleURL(
+            named: resourceName,
+            extension: fileExtension,
+            subdirectory: subdirectory
+        ) else {
+            print("🔊 [AR] Audio not found: \(resourceName).\(fileExtension)")
+            return nil
         }
 
         do {
-            let resource = try await AudioFileResource(
-                contentsOf: url,
-                configuration: .init(shouldLoop: true)
+            let handle = try await SpatialAudioEmitter.play(
+                in: arView.scene,
+                audioURL: url,
+                at: worldPosition,
+                config: config
             )
-            letterAudioController = entity.playAudio(resource)
-            print("📜 [AR] Letter spatial audio playing")
+            print("🔊 [AR] Spatial audio playing at \(worldPosition)")
+            return handle
         } catch {
-            print("📜 [AR] Failed to load letter audio: \(error.localizedDescription)")
+            print("🔊 [AR] Failed to start spatial audio: \(error.localizedDescription)")
+            return nil
         }
     }
 
     private func makeLetterVisual() -> ModelEntity {
         let letterSize = planeSize(for: Self.letterTextureName, baseWidth: 0.28)
         let mesh = MeshResource.generatePlane(width: letterSize.width, depth: letterSize.depth)
-        let material = loadTexturedMaterial(
+        let material = loadDecalMaterial(
             named: Self.letterTextureName,
             fallbackColor: .white
         )
@@ -879,6 +920,67 @@ final class ARService: NSObject, ObservableObject {
         default:
             return true
         }
+    }
+
+    /// Loads a floor decal texture with alpha blending and dark-pixel removal.
+    private func loadDecalMaterial(named assetName: String, fallbackColor: UIColor) -> Material {
+        guard let source = UIImage(named: assetName)?.cgImage else {
+            print("🖼️ [AR] Missing decal '\(assetName)' — using fallback color")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+
+        let cgImage = cgImageByStrippingDarkBackground(source) ?? source
+
+        do {
+            let texture = try TextureResource.generate(
+                from: cgImage,
+                options: .init(semantic: .color)
+            )
+            var material = UnlitMaterial()
+            material.color = .init(tint: .white, texture: .init(texture))
+            material.blending = .transparent(opacity: .init(scale: 1.0))
+            return material
+        } catch {
+            print("🖼️ [AR] Failed to load decal '\(assetName)': \(error.localizedDescription)")
+            return SimpleMaterial(color: .init(cgColor: fallbackColor.cgColor), isMetallic: false)
+        }
+    }
+
+    /// Converts near-black pixels to transparent so decal PNGs don't show a square backdrop.
+    private func cgImageByStrippingDarkBackground(_ source: CGImage, threshold: UInt8 = 42) -> CGImage? {
+        let width = source.width
+        let height = source.height
+        let bytesPerPixel = 4
+        let bytesPerRow = bytesPerPixel * width
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return nil }
+
+        let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * bytesPerPixel)
+        for offset in stride(from: 0, to: width * height * bytesPerPixel, by: bytesPerPixel) {
+            let red = pixels[offset]
+            let green = pixels[offset + 1]
+            let blue = pixels[offset + 2]
+            if red <= threshold, green <= threshold, blue <= threshold {
+                pixels[offset] = 0
+                pixels[offset + 1] = 0
+                pixels[offset + 2] = 0
+                pixels[offset + 3] = 0
+            }
+        }
+
+        return context.makeImage()
     }
 
     /// Returns plane width/depth preserving the source image aspect ratio.

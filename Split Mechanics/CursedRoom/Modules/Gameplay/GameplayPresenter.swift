@@ -117,6 +117,11 @@ final class GameplayPresenter: ObservableObject {
         interactor.beginBloodTrailPhase()
     }
 
+    func dismissLetterAndBeginTrail() {
+        showLetterSheet = false
+        beginBloodTrailPhase()
+    }
+
     // MARK: - Keypad Helpers
 
     func appendDigit(_ digit: String) {
