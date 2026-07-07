@@ -90,7 +90,7 @@ final class ARService: NSObject, ObservableObject {
     private var wantsLetter = false
     private var letterAnchorAdded = false
     private var letterAnchorEntity: AnchorEntity?
-    private var letterAudioController: AudioPlaybackController?
+    private var letterAudioHandle: SpatialAudioEmitter.Handle?
     private var pendingLetterAnchor: ARAnchor?
     private var pendingLetterTransform: simd_float4x4?
 
@@ -98,7 +98,7 @@ final class ARService: NSObject, ObservableObject {
 
     private var bloodPoolAnchorEntity: AnchorEntity?
     private var footstepsAnchorEntity: AnchorEntity?
-    private var whisperAudioController: AudioPlaybackController?
+    private var whisperAudioHandle: SpatialAudioEmitter.Handle?
     private var hasSpawnedBloodTrail = false
 
     private static let dollAnchorName = "cursed_doll_anchor"
@@ -474,7 +474,7 @@ final class ARService: NSObject, ObservableObject {
         isLetterSpawned = true
         letterWorldPosition = worldPosition
 
-        attachLetterContent(to: anchorEntity, for: role)
+        attachLetterContent(to: anchorEntity, for: role, worldPosition: worldPosition)
 
         statusMessage = role == .listener
             ? "Listen… something is calling from the walls."
@@ -482,7 +482,11 @@ final class ARService: NSObject, ObservableObject {
         print("📜 [AR] Letter spawned for \(role.rawValue) at \(worldPosition)")
     }
 
-    private func attachLetterContent(to anchorEntity: AnchorEntity, for role: PlayerRole) {
+    private func attachLetterContent(
+        to anchorEntity: AnchorEntity,
+        for role: PlayerRole,
+        worldPosition: simd_float3
+    ) {
         switch role {
         case .seer:
             // Seer sees the letter; no spatial audio (they must rely on the Listener).
@@ -491,16 +495,22 @@ final class ARService: NSObject, ObservableObject {
             configureLetterTap()
 
         case .listener:
-            // Listener cannot see the letter — only hears it via RealityKit spatial audio.
-            let listenerAudio = Entity()
-            listenerAudio.name = Self.letterEntityName + "_listener"
-            anchorEntity.addChild(listenerAudio)
-            listenerAudio.components.set(SpatialAudioComponent(
-                gain: Audio.Decibel(-3),
-                directivity: .beam(focus: 0),
-                distanceAttenuation: .rolloff(factor: 1.0)
-            ))
-            Task { await self.startLetterSpatialAudio(on: listenerAudio) }
+            // Pin audio to the exact letter world position — not the anchor rotation.
+            Task {
+                await self.playSpatialClueAudio(
+                    resourceName: Self.letterAudioName,
+                    fileExtension: Self.letterAudioExtension,
+                    subdirectory: Self.letterAudioSubdirectory,
+                    at: worldPosition,
+                    config: .init(
+                        gain: Audio.Decibel(-3),
+                        directivity: .beam(focus: 0),
+                        distanceAttenuation: .rolloff(factor: 1.0),
+                        entityName: Self.letterEntityName + "_listener_audio"
+                    ),
+                    existingHandle: &self.letterAudioHandle
+                )
+            }
 
         case .unassigned:
             break
@@ -836,49 +846,37 @@ final class ARService: NSObject, ObservableObject {
         return seal
     }
 
-    // MARK: - Audio URL Helper
+    // MARK: - Spatial Audio
 
-    private func whisperAudioURL() -> URL? {
-        let bundle = Bundle.main
-        return bundle.url(
-            forResource: Self.whisperAudioName,
-            withExtension: Self.whisperAudioExtension,
-            subdirectory: Self.whisperAudioSubdirectory
-        ) ?? bundle.url(
-            forResource: Self.whisperAudioName,
-            withExtension: Self.whisperAudioExtension
-        )
-    }
-
-    private func letterAudioURL() -> URL? {
-        let bundle = Bundle.main
-        return bundle.url(
-            forResource: Self.letterAudioName,
-            withExtension: Self.letterAudioExtension,
-            subdirectory: Self.letterAudioSubdirectory
-        ) ?? bundle.url(
-            forResource: Self.letterAudioName,
-            withExtension: Self.letterAudioExtension
-        )
-    }
-
-    /// Loads BGM.mp3 and loops it from the invisible listener-only audio entity.
-    private func startLetterSpatialAudio(on entity: Entity) async {
-        guard letterAudioController == nil else { return }
-        guard let url = letterAudioURL() else {
-            print("📜 [AR] Letter audio not found in bundle")
+    /// Starts looping spatial audio at an exact world coordinate.
+    private func playSpatialClueAudio(
+        resourceName: String,
+        fileExtension: String,
+        subdirectory: String?,
+        at worldPosition: simd_float3,
+        config: SpatialAudioEmitter.Config,
+        existingHandle: inout SpatialAudioEmitter.Handle?
+    ) async {
+        guard existingHandle == nil else { return }
+        guard let url = SpatialAudioEmitter.bundleURL(
+            named: resourceName,
+            extension: fileExtension,
+            subdirectory: subdirectory
+        ) else {
+            print("🔊 [AR] Audio not found: \(resourceName).\(fileExtension)")
             return
         }
 
         do {
-            let resource = try await AudioFileResource(
-                contentsOf: url,
-                configuration: .init(shouldLoop: true)
+            existingHandle = try await SpatialAudioEmitter.play(
+                in: arView.scene,
+                audioURL: url,
+                at: worldPosition,
+                config: config
             )
-            letterAudioController = entity.playAudio(resource)
-            print("📜 [AR] Letter spatial audio playing")
+            print("🔊 [AR] Spatial audio playing at \(worldPosition)")
         } catch {
-            print("📜 [AR] Failed to load letter audio: \(error.localizedDescription)")
+            print("🔊 [AR] Failed to start spatial audio: \(error.localizedDescription)")
         }
     }
 
