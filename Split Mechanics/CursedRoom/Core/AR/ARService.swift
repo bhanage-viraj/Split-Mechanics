@@ -519,16 +519,37 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7A — Blood Trail & Pool (Seer visuals)
 
-    /// Called by the interactor once the letter phase is done. Host only: starts at
-    /// the letter, winds a curved footprint trail across the room, and places the
-    /// blood pool at the far end.
-    func spawnBloodTrailAndPool() {
-        guard !hasSpawnedBloodTrail else { return }
+    struct BloodTrailSpawnResult {
+        let destination: simd_float3
+        let bendSide: Float
+    }
 
-        let floorY = SpatialMath.floorY(
-            from: Array(floorPlanes.values),
-            fallback: letterWorldPosition?.y ?? 0
-        )
+    /// Host authority: picks destination, lays footprints on a curved line, spawns pool.
+    @discardableResult
+    func spawnBloodTrailAndPool() -> BloodTrailSpawnResult? {
+        let bendSide: Float = Bool.random() ? 1 : -1
+        return spawnBloodTrailAndPool(destination: nil, bendSide: bendSide)
+    }
+
+    /// Guest (or Host resync): uses the synced destination and curve direction.
+    @discardableResult
+    func spawnBloodTrailAtSyncedDestination(
+        _ destination: simd_float3,
+        bendSide: Float
+    ) -> BloodTrailSpawnResult? {
+        spawnBloodTrailAndPool(destination: destination, bendSide: bendSide)
+    }
+
+    @discardableResult
+    private func spawnBloodTrailAndPool(
+        destination syncedDestination: simd_float3?,
+        bendSide: Float
+    ) -> BloodTrailSpawnResult? {
+        guard !hasSpawnedBloodTrail else { return nil }
+        guard let floorY = resolvedFloorY() else {
+            print("🩸 [AR] No floor height — skipping blood trail")
+            return nil
+        }
 
         let trailStart: simd_float3
         if let letterPosition = letterWorldPosition {
@@ -539,23 +560,33 @@ final class ARService: NSObject, ObservableObject {
                 floorY: floorY
             )
         } else {
-            print("🩸 [AR] No room reference — skipping blood trail")
-            return
+            print("🩸 [AR] No trail start — skipping blood trail")
+            return nil
         }
 
-        let maxDimension: Float = floorPlanes.values
-            .map { max($0.planeExtent.width, $0.planeExtent.height) }
-            .max() ?? 3.0
-        let walkDistance = max(1.4, maxDimension * Self.bloodTrailWalkFraction)
+        let destination: simd_float3
+        if let syncedDestination {
+            destination = SpatialMath.projectToFloor(syncedDestination, floorY: floorY)
+        } else {
+            let maxDimension: Float = floorPlanes.values
+                .map { max($0.planeExtent.width, $0.planeExtent.height) }
+                .max() ?? 3.0
+            let walkDistance = max(1.4, maxDimension * Self.bloodTrailWalkFraction)
+            destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
+        }
 
-        let destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
         let curvedPath = generateCurvedFootstepPath(
             from: trailStart,
             to: destination,
-            floorY: floorY
+            floorY: floorY,
+            bendSide: bendSide
         )
+        guard !curvedPath.isEmpty else {
+            print("🩸 [AR] Empty footprint path — skipping blood trail")
+            return nil
+        }
 
-        footstepsAnchorEntity = spawnFootsteps(along: curvedPath)
+        footstepsAnchorEntity = spawnFootsteps(along: curvedPath, floorY: floorY)
 
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
         let poolEntity = makeBloodPoolEntity()
@@ -576,6 +607,20 @@ final class ARService: NSObject, ObservableObject {
         configureBloodPoolTap()
         hasSpawnedBloodTrail = true
         print("🩸 [AR] Blood trail spawned — \(curvedPath.count) steps to \(destination)")
+        return BloodTrailSpawnResult(destination: destination, bendSide: bendSide)
+    }
+
+    private func resolvedFloorY() -> Float? {
+        if !floorPlanes.isEmpty {
+            return SpatialMath.floorY(from: Array(floorPlanes.values), fallback: 0)
+        }
+        if let letterPosition = letterWorldPosition {
+            return letterPosition.y - SpatialMath.letterHeightAboveFloor
+        }
+        if let frame = arView.session.currentFrame {
+            return SpatialMath.cameraPosition(from: frame).y - SpatialMath.letterHeightAboveFloor
+        }
+        return nil
     }
 
     private func floorObstacles() -> [SpatialMath.FloorObstacle] {
@@ -617,12 +662,12 @@ final class ARService: NSObject, ObservableObject {
         )
     }
 
-    /// Builds a short curved path from the letter toward the blood pool — small
-    /// bends only, so footsteps stay in a readable trail instead of scattering.
+    /// Lays footsteps on a single curved Bézier arc from the letter to the blood pool.
     private func generateCurvedFootstepPath(
         from start: simd_float3,
         to end: simd_float3,
-        floorY: Float
+        floorY: Float,
+        bendSide: Float
     ) -> [simd_float3] {
         let startPoint = SpatialMath.projectToFloor(start, floorY: floorY)
         let endPoint = SpatialMath.projectToFloor(end, floorY: floorY)
@@ -635,31 +680,24 @@ final class ARService: NSObject, ObservableObject {
 
         let forward = travel / travelLength
         let right = simd_float3(-forward.z, 0, forward.x)
-        let bendSide: Float = Bool.random() ? 1 : -1
-        let bend = Self.footprintMaxLateralBend * bendSide
-
-        let waypoints = [
-            startPoint,
-            SpatialMath.projectToFloor(startPoint + forward * (travelLength * 0.33) + right * (bend * 0.6), floorY: floorY),
-            SpatialMath.projectToFloor(startPoint + forward * (travelLength * 0.66) + right * bend, floorY: floorY),
-            endPoint
-        ]
-
-        let densePath = SpatialMath.catmullRomPath(waypoints: waypoints, samplesPerSegment: 8)
+        let midpoint = (startPoint + endPoint) * 0.5
+        let control = SpatialMath.projectToFloor(
+            midpoint + right * (Self.footprintMaxLateralBend * bendSide),
+            floorY: floorY
+        )
         let stepCount = max(8, min(22, Int(travelLength / Self.footprintStepSpacing) + 1))
 
-        guard densePath.count >= stepCount else { return densePath }
-
-        let sampleStride = Float(densePath.count - 1) / Float(stepCount - 1)
-        return (0..<stepCount).map { index in
-            let sampleIndex = min(densePath.count - 1, Int(round(Float(index) * sampleStride)))
-            return densePath[sampleIndex]
-        }
+        return SpatialMath.quadraticBezierPath(
+            from: startPoint,
+            control: control,
+            to: endPoint,
+            stepCount: stepCount
+        )
     }
 
     /// Creates a trail of textured footprint decals along a curved floor path.
-    private func spawnFootsteps(along path: [simd_float3]) -> AnchorEntity {
-        let anchor = AnchorEntity(world: matrix_identity_float4x4)
+    private func spawnFootsteps(along path: [simd_float3], floorY: Float) -> AnchorEntity {
+        let anchor = AnchorEntity(world: SpatialMath.translation(path[0]))
         anchor.name = Self.footstepsAnchorName
         let footprintSize = planeSize(for: Self.footstepsTextureName, baseWidth: Self.footprintBaseWidth)
         let material = loadDecalMaterial(
@@ -678,7 +716,8 @@ final class ARService: NSObject, ObservableObject {
             let sideOffset = (index % 2 == 0 ? 1.0 : -1.0) * footprintSize.width * 0.28
 
             var position = current + sideways * sideOffset
-            position.y += Self.footprintFloorOffset
+            position.y = floorY + Self.footprintFloorOffset
+            position -= path[0]
 
             let step = ModelEntity(
                 mesh: .generatePlane(width: footprintSize.width, depth: footprintSize.depth),

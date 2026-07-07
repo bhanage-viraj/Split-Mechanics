@@ -160,6 +160,25 @@ enum SpatialMath {
         simd_float3(point.x, floorY, point.z)
     }
 
+    /// Evenly samples a quadratic Bézier curve — the imaginary arc for footprint trails.
+    static func quadraticBezierPath(
+        from start: simd_float3,
+        control: simd_float3,
+        to end: simd_float3,
+        stepCount: Int
+    ) -> [simd_float3] {
+        guard stepCount > 1 else { return [start, end] }
+
+        return (0..<stepCount).map { index in
+            let t = Float(index) / Float(stepCount - 1)
+            let inverse = 1 - t
+            let x = inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x
+            let y = inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y
+            let z = inverse * inverse * start.z + 2 * inverse * t * control.z + t * t * end.z
+            return simd_float3(x, y, z)
+        }
+    }
+
     /// Samples a smooth Catmull-Rom spline through `waypoints` on the floor plane.
     static func catmullRomPath(waypoints: [simd_float3], samplesPerSegment: Int) -> [simd_float3] {
         guard waypoints.count >= 2 else { return waypoints }
