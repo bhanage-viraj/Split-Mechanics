@@ -20,10 +20,8 @@ struct GameplayView: View {
             roleOverlay
             keypadOverlay
         }
-        .sheet(isPresented: $presenter.showLetterSheet, onDismiss: {
-            presenter.beginBloodTrailPhase()
-        }) {
-            LetterSheetView()
+        .sheet(isPresented: $presenter.showLetterSheet) {
+            LetterSheetView(onDone: presenter.dismissLetterAndBeginTrail)
         }
         .onAppear {
             presenter.onAppear()
@@ -239,29 +237,43 @@ private struct KeypadActionButton: View {
 // MARK: - Letter Sheet
 
 struct LetterSheetView: View {
-    @Environment(\.dismiss) private var dismiss
+    let onDone: () -> Void
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
+            VStack(spacing: 24) {
                 Text("📜 Hidden Letter")
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Follow the trail…")
-                    .font(.title)
-                    .foregroundColor(.gray)
+                Text(
+                    "To break the curse, you must find the two pieces of the ancient seal. "
+                    + "Only when the seal is restored will the monster lose its power."
+                )
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+                Text("Follow the bloody trail…")
+                    .font(.title3)
+                    .foregroundStyle(.red.opacity(0.85))
 
                 Spacer()
+
+                Button(action: onDone) {
+                    Text("Done")
+                        .font(.headline.bold())
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
             }
             .navigationTitle("Clue")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
-            }
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
