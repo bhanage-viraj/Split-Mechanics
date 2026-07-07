@@ -753,41 +753,22 @@ final class ARService: NSObject, ObservableObject {
     /// an invisible entity at the blood pool destination with aggressive spatial
     /// audio attenuation so the Listener must physically walk to find it.
     func spawnWhisperAudio(at destination: simd_float3) {
-        let whisperAnchor = AnchorEntity(world: SpatialMath.translation(destination))
-        let whisperEntity = Entity()
-        whisperEntity.name = Self.whisperEntityName
-        whisperAnchor.addChild(whisperEntity)
-
-        whisperEntity.components.set(SpatialAudioComponent(
-            gain: Audio.Decibel(-3),
-            directivity: .beam(focus: 0),
-            distanceAttenuation: .rolloff(factor: 2.0)
-        ))
-
-        arView.scene.addAnchor(whisperAnchor)
-
-        Task { await self.startWhisperSpatialAudio(on: whisperEntity) }
-        print("🩸 [AR] Whisper audio placed — aggressive attenuation (ref: 0.2m, max: 4.0m)")
-    }
-
-    /// Loads BGM.mp3 and loops it from the invisible whisper entity.
-    private func startWhisperSpatialAudio(on entity: Entity) async {
-        guard whisperAudioController == nil else { return }
-        guard let url = whisperAudioURL() else {
-            print("🩸 [AR] Whisper audio not found in bundle")
-            return
-        }
-
-        do {
-            let resource = try await AudioFileResource(
-                contentsOf: url,
-                configuration: .init(shouldLoop: true)
+        Task {
+            await self.playSpatialClueAudio(
+                resourceName: Self.whisperAudioName,
+                fileExtension: Self.whisperAudioExtension,
+                subdirectory: Self.whisperAudioSubdirectory,
+                at: destination,
+                config: .init(
+                    gain: Audio.Decibel(-3),
+                    directivity: .beam(focus: 0),
+                    distanceAttenuation: .rolloff(factor: 2.0),
+                    entityName: Self.whisperEntityName
+                ),
+                existingHandle: &self.whisperAudioHandle
             )
-            whisperAudioController = entity.playAudio(resource)
-            print("🩸 [AR] Whisper spatial audio playing (BGM.mp3)")
-        } catch {
-            print("🩸 [AR] Failed to load whisper audio: \(error.localizedDescription)")
         }
+        print("🩸 [AR] Whisper audio placed at \(destination)")
     }
 
     // MARK: - Phase 7C — First Seal Reveal
@@ -798,8 +779,8 @@ final class ARService: NSObject, ObservableObject {
         bloodPoolAnchorEntity = nil
         footstepsAnchorEntity.map { arView.scene.removeAnchor($0) }
         footstepsAnchorEntity = nil
-        whisperAudioController?.stop()
-        whisperAudioController = nil
+        whisperAudioHandle?.stop(in: arView.scene)
+        whisperAudioHandle = nil
         bloodPoolWorldPosition = nil
         hasSpawnedBloodTrail = false
         print("🩸 [AR] Blood trail entities removed")
