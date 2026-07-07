@@ -15,8 +15,7 @@ enum SpatialAudioEmitter {
 
     struct Config {
         var gain: Audio.Decibel = Audio.Decibel(-3)
-        var directivity: SpatialAudioComponent.Directivity = .beam(focus: 0)
-        var distanceAttenuation: SpatialAudioComponent.DistanceAttenuation = .rolloff(factor: 1.0)
+        var rolloffFactor: Float = 1.0
         var loops: Bool = true
         var entityName: String = "spatial_audio_emitter"
     }
@@ -62,8 +61,8 @@ enum SpatialAudioEmitter {
 
         emitter.components.set(SpatialAudioComponent(
             gain: config.gain,
-            directivity: config.directivity,
-            distanceAttenuation: config.distanceAttenuation
+            directivity: .beam(focus: 0),
+            distanceAttenuation: .rolloff(factor: Double(config.rolloffFactor))
         ))
 
         scene.addAnchor(anchor)
