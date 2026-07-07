@@ -124,9 +124,10 @@ final class ARService: NSObject, ObservableObject {
     private static let whisperAudioName = "BGM"
     private static let whisperAudioExtension = "mp3"
     private static let whisperAudioSubdirectory = "Sounds"
-    private static let bloodTrailWalkFraction: Float = 0.62   // ~62% of the room's longest floor dimension
+    private static let bloodTrailWalkFraction: Float = 0.40
     private static let footprintBaseWidth: Float = 0.32
-    private static let footprintStepCount: Int = 30
+    private static let footprintStepSpacing: Float = 0.42
+    private static let footprintMaxLateralBend: Float = 0.30
     private static let footprintFloorOffset: Float = 0.006
 
     // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
@@ -496,19 +497,18 @@ final class ARService: NSObject, ObservableObject {
 
         case .listener:
             // Pin audio to the exact letter world position — not the anchor rotation.
-            Task {
-                await self.playSpatialClueAudio(
+            Task { [weak self] in
+                guard let self, self.letterAudioHandle == nil else { return }
+                self.letterAudioHandle = await self.playSpatialClueAudio(
                     resourceName: Self.letterAudioName,
                     fileExtension: Self.letterAudioExtension,
                     subdirectory: Self.letterAudioSubdirectory,
                     at: worldPosition,
                     config: .init(
                         gain: Audio.Decibel(-3),
-                        directivity: .beam(focus: 0),
-                        distanceAttenuation: .rolloff(factor: 1.0),
+                        rolloffFactor: 1.0,
                         entityName: Self.letterEntityName + "_listener_audio"
-                    ),
-                    existingHandle: &self.letterAudioHandle
+                    )
                 )
             }
 
@@ -546,14 +546,12 @@ final class ARService: NSObject, ObservableObject {
         let maxDimension: Float = floorPlanes.values
             .map { max($0.planeExtent.width, $0.planeExtent.height) }
             .max() ?? 3.0
-        let walkDistance = max(2.0, maxDimension * Self.bloodTrailWalkFraction)
-        let roomRadius = maxDimension * 0.5
+        let walkDistance = max(1.4, maxDimension * Self.bloodTrailWalkFraction)
 
         let destination = randomFloorDestination(from: trailStart, distance: walkDistance, floorY: floorY)
         let curvedPath = generateCurvedFootstepPath(
             from: trailStart,
             to: destination,
-            roomRadius: roomRadius,
             floorY: floorY
         )
 
@@ -619,55 +617,42 @@ final class ARService: NSObject, ObservableObject {
         )
     }
 
-    /// Builds interior waypoints that scatter the trail across the room, then
-    /// smooths them into a curved path with Catmull-Rom interpolation.
+    /// Builds a short curved path from the letter toward the blood pool — small
+    /// bends only, so footsteps stay in a readable trail instead of scattering.
     private func generateCurvedFootstepPath(
         from start: simd_float3,
         to end: simd_float3,
-        roomRadius: Float,
         floorY: Float
     ) -> [simd_float3] {
-        let obstacles = floorObstacles()
-        let travel = simd_float3(end.x - start.x, 0, end.z - start.z)
+        let startPoint = SpatialMath.projectToFloor(start, floorY: floorY)
+        let endPoint = SpatialMath.projectToFloor(end, floorY: floorY)
+        let travel = simd_float3(endPoint.x - startPoint.x, 0, endPoint.z - startPoint.z)
         let travelLength = simd_length(travel)
-        let forward = travelLength > 0.001 ? travel / travelLength : simd_float3(0, 0, 1)
-        let right = simd_float3(-forward.z, 0, forward.x)
 
-        let waypointCount = Int.random(in: 4...6)
-        var waypoints: [simd_float3] = [start]
-
-        for index in 1...waypointCount {
-            let progress = Float(index) / Float(waypointCount + 1)
-            let base = start + forward * (travelLength * progress)
-            let lateralSpread = roomRadius * Float.random(in: 0.35...0.85)
-            let lateralSign: Float = Bool.random() ? 1 : -1
-            let forwardJitter = Float.random(in: -roomRadius * 0.2 ... roomRadius * 0.2)
-            let preferred = SpatialMath.projectToFloor(
-                base + right * lateralSpread * lateralSign + forward * forwardJitter,
-                floorY: floorY
-            )
-            let waypoint = RandomnessMath.clearFloorPoint(
-                preferred: preferred,
-                searchRadius: roomRadius * 0.35,
-                obstacles: obstacles,
-                clearance: 0.45,
-                attempts: 50
-            )
-            waypoints.append(SpatialMath.projectToFloor(waypoint, floorY: floorY))
+        guard travelLength > 0.15 else {
+            return [startPoint, endPoint]
         }
 
-        waypoints.append(end)
+        let forward = travel / travelLength
+        let right = simd_float3(-forward.z, 0, forward.x)
+        let bendSide: Float = Bool.random() ? 1 : -1
+        let bend = Self.footprintMaxLateralBend * bendSide
 
-        let densePath = SpatialMath.catmullRomPath(
-            waypoints: waypoints,
-            samplesPerSegment: max(4, Self.footprintStepCount / max(1, waypoints.count - 1))
-        )
+        let waypoints = [
+            startPoint,
+            SpatialMath.projectToFloor(startPoint + forward * (travelLength * 0.33) + right * (bend * 0.6), floorY: floorY),
+            SpatialMath.projectToFloor(startPoint + forward * (travelLength * 0.66) + right * bend, floorY: floorY),
+            endPoint
+        ]
 
-        guard densePath.count >= Self.footprintStepCount else { return densePath }
+        let densePath = SpatialMath.catmullRomPath(waypoints: waypoints, samplesPerSegment: 8)
+        let stepCount = max(8, min(22, Int(travelLength / Self.footprintStepSpacing) + 1))
 
-        let stride = Float(densePath.count - 1) / Float(Self.footprintStepCount - 1)
-        return (0..<Self.footprintStepCount).map { index in
-            let sampleIndex = min(densePath.count - 1, Int(round(Float(index) * stride)))
+        guard densePath.count >= stepCount else { return densePath }
+
+        let sampleStride = Float(densePath.count - 1) / Float(stepCount - 1)
+        return (0..<stepCount).map { index in
+            let sampleIndex = min(densePath.count - 1, Int(round(Float(index) * sampleStride)))
             return densePath[sampleIndex]
         }
     }
@@ -753,19 +738,18 @@ final class ARService: NSObject, ObservableObject {
     /// an invisible entity at the blood pool destination with aggressive spatial
     /// audio attenuation so the Listener must physically walk to find it.
     func spawnWhisperAudio(at destination: simd_float3) {
-        Task {
-            await self.playSpatialClueAudio(
+        Task { [weak self] in
+            guard let self, self.whisperAudioHandle == nil else { return }
+            self.whisperAudioHandle = await self.playSpatialClueAudio(
                 resourceName: Self.whisperAudioName,
                 fileExtension: Self.whisperAudioExtension,
                 subdirectory: Self.whisperAudioSubdirectory,
                 at: destination,
                 config: .init(
                     gain: Audio.Decibel(-3),
-                    directivity: .beam(focus: 0),
-                    distanceAttenuation: .rolloff(factor: 2.0),
+                    rolloffFactor: 2.0,
                     entityName: Self.whisperEntityName
-                ),
-                existingHandle: &self.whisperAudioHandle
+                )
             )
         }
         print("🩸 [AR] Whisper audio placed at \(destination)")
@@ -835,29 +819,29 @@ final class ARService: NSObject, ObservableObject {
         fileExtension: String,
         subdirectory: String?,
         at worldPosition: simd_float3,
-        config: SpatialAudioEmitter.Config,
-        existingHandle: inout SpatialAudioEmitter.Handle?
-    ) async {
-        guard existingHandle == nil else { return }
+        config: SpatialAudioEmitter.Config
+    ) async -> SpatialAudioEmitter.Handle? {
         guard let url = SpatialAudioEmitter.bundleURL(
             named: resourceName,
             extension: fileExtension,
             subdirectory: subdirectory
         ) else {
             print("🔊 [AR] Audio not found: \(resourceName).\(fileExtension)")
-            return
+            return nil
         }
 
         do {
-            existingHandle = try await SpatialAudioEmitter.play(
+            let handle = try await SpatialAudioEmitter.play(
                 in: arView.scene,
                 audioURL: url,
                 at: worldPosition,
                 config: config
             )
             print("🔊 [AR] Spatial audio playing at \(worldPosition)")
+            return handle
         } catch {
             print("🔊 [AR] Failed to start spatial audio: \(error.localizedDescription)")
+            return nil
         }
     }
 
