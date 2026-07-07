@@ -864,7 +864,7 @@ final class ARService: NSObject, ObservableObject {
     private func makeLetterVisual() -> ModelEntity {
         let letterSize = planeSize(for: Self.letterTextureName, baseWidth: 0.28)
         let mesh = MeshResource.generatePlane(width: letterSize.width, depth: letterSize.depth)
-        let material = loadTexturedMaterial(
+        let material = loadDecalMaterial(
             named: Self.letterTextureName,
             fallbackColor: .white
         )
