@@ -38,6 +38,8 @@ struct NetworkEvent: Codable, Sendable {
         case roleAssignment = "role_assignment"
         case letterSpawn = "letter_spawn"
         case clueCode = "clue_code"
+        case requestBloodTrail = "request_blood_trail"
+        case bloodTrailSpawn = "blood_trail_spawn"
         case sealCollected = "seal_collected"
     }
 
@@ -78,6 +80,17 @@ struct NetworkEvent: Codable, Sendable {
     /// Host → Guest: 3-digit clue code for the blood pool puzzle (Phase 7A).
     static func clueCode(code: String) -> NetworkEvent {
         return NetworkEvent(eventType: EventType.clueCode.rawValue, payload: code)
+    }
+
+    /// Guest Seer → Host: asks the authoritative device to place the blood trail.
+    static func requestBloodTrail() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.requestBloodTrail.rawValue, payload: nil)
+    }
+
+    /// Host → both: synced blood pool destination and curve direction (Phase 7A).
+    static func bloodTrailSpawn(destination: simd_float3, bendSide: Float) -> NetworkEvent {
+        let payload = BloodTrailSpawnPayload.encode(destination: destination, bendSide: bendSide)
+        return NetworkEvent(eventType: EventType.bloodTrailSpawn.rawValue, payload: payload)
     }
 
     /// Either player → the other: first seal collected, update UI state (Phase 7C).
@@ -135,5 +148,19 @@ enum LetterSpawnPayload {
         matrix.columns.2 = simd_float4(parts[8], parts[9], parts[10], parts[11])
         matrix.columns.3 = simd_float4(parts[12], parts[13], parts[14], parts[15])
         return matrix
+    }
+}
+
+/// Encodes the synced blood pool destination and curve bend for Phase 7A.
+enum BloodTrailSpawnPayload {
+    static func encode(destination: simd_float3, bendSide: Float) -> String {
+        "\(destination.x),\(destination.y),\(destination.z),\(bendSide)"
+    }
+
+    static func decode(_ payload: String?) -> (destination: simd_float3, bendSide: Float)? {
+        guard let payload else { return nil }
+        let parts = payload.split(separator: ",").compactMap { Float($0) }
+        guard parts.count == 4 else { return nil }
+        return (simd_float3(parts[0], parts[1], parts[2]), parts[3])
     }
 }

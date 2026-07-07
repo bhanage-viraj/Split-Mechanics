@@ -61,6 +61,7 @@ final class GameplayInteractor: ObservableObject {
         bindSealEvents()
         bindListenerWhisperHints()
         bindClueCodeFromHost()
+        bindBloodTrailSync()
         assignRolesIfNeeded()
         if playerRole != .unassigned {
             beginLetterHunt()
@@ -363,20 +364,64 @@ final class GameplayInteractor: ObservableObject {
 
     // MARK: - Blood Trail Spawning (triggered after letter phase)
 
-    /// Call this after the letter is collected to start Phase 7A.
+    /// Call this after the Seer dismisses the letter sheet to start Phase 7A.
     func beginBloodTrailPhase() {
+        guard playerRole == .seer else { return }
         guard !didSpawnBloodTrail else { return }
-        didSpawnBloodTrail = true
 
         if networkService.role == .host {
-            arService.spawnBloodTrailAndPool()
-            // Send clue code to the Guest.
-            networkService.send(.clueCode(code: clueCode))
-            print("🔢 [Gameplay] Host sent clue code to Guest")
+            performAuthoritativeBloodTrailSpawn()
+        } else {
+            networkService.send(.requestBloodTrail())
+            print("🩸 [Gameplay] Guest Seer requested blood trail from Host")
         }
 
         stopListenerProximityLoop()
+    }
+
+    private func performAuthoritativeBloodTrailSpawn() {
+        guard !didSpawnBloodTrail else { return }
+        guard let result = arService.spawnBloodTrailAndPool() else {
+            print("🩸 [Gameplay] Blood trail spawn failed — will retry on next Done tap")
+            return
+        }
+
+        didSpawnBloodTrail = true
+        networkService.send(.bloodTrailSpawn(destination: result.destination, bendSide: result.bendSide))
+        networkService.send(.clueCode(code: clueCode))
+        print("🔢 [Gameplay] Host sent clue code and blood trail sync")
         print("🩸 [Gameplay] Phase 7 blood trail phase started")
+    }
+
+    private func applySyncedBloodTrail(destination: simd_float3, bendSide: Float) {
+        guard !didSpawnBloodTrail else { return }
+        guard arService.spawnBloodTrailAtSyncedDestination(destination, bendSide: bendSide) != nil else {
+            print("🩸 [Gameplay] Synced blood trail spawn failed")
+            return
+        }
+
+        didSpawnBloodTrail = true
+        print("🩸 [Gameplay] Synced blood trail spawned at \(destination)")
+    }
+
+    private func bindBloodTrailSync() {
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.requestBloodTrail.rawValue }
+            .sink { [weak self] _ in
+                guard let self, self.networkService.role == .host else { return }
+                self.performAuthoritativeBloodTrailSpawn()
+            }
+            .store(in: &cancellables)
+
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.bloodTrailSpawn.rawValue }
+            .sink { [weak self] event in
+                guard let self else { return }
+                guard self.networkService.role == .guest else { return }
+                guard let sync = BloodTrailSpawnPayload.decode(event.payload) else { return }
+                self.applySyncedBloodTrail(destination: sync.destination, bendSide: sync.bendSide)
+            }
+            .store(in: &cancellables)
     }
 
     /// Guest receives the clue code from the Host.
