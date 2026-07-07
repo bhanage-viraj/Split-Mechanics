@@ -664,11 +664,7 @@ final class ARService: NSObject, ObservableObject {
         whisperEntity.components.set(SpatialAudioComponent(
             gain: Audio.Decibel(-3),
             directivity: .beam(focus: 0),
-            distanceAttenuation: .inverseSquare(
-                referenceDistance: 0.2,
-                maximumDistance: 4.0,
-                rolloffFactor: 2.0
-            )
+            distanceAttenuation: .rolloff(factor: 2.0)
         ))
 
         arView.scene.addAnchor(whisperAnchor)
@@ -680,7 +676,10 @@ final class ARService: NSObject, ObservableObject {
     /// Loads BGM.mp3 and loops it from the invisible whisper entity.
     private func startWhisperSpatialAudio(on entity: Entity) async {
         guard whisperAudioController == nil else { return }
-        let url = whisperAudioURL()
+        guard let url = whisperAudioURL() else {
+            print("🩸 [AR] Whisper audio not found in bundle")
+            return
+        }
 
         do {
             let resource = try await AudioFileResource(
@@ -726,8 +725,8 @@ final class ARService: NSObject, ObservableObject {
         let mesh = MeshResource.generatePlane(width: 0.25, depth: 0.25)
         let material = SimpleMaterial(
             color: .init(red: 0.1, green: 0.5, blue: 1.0, alpha: 1.0),
-            isMetallic: true,
-            roughness: 0.2
+            roughness: 0.2,
+            isMetallic: true
         )
         let seal = ModelEntity(mesh: mesh, materials: [material])
         seal.name = Self.bloodPoolWithSealName
@@ -745,9 +744,9 @@ final class ARService: NSObject, ObservableObject {
             let pulseRange: Float = 0.15
             let speed: Float = 2.0
             let startTime = CACurrentMediaTime()
-            while !seal.scene == nil {
+            while seal.scene != nil {
                 let elapsed = CACurrentMediaTime() - startTime
-                let s = baseScale + pulseRange * sin(elapsed * speed)
+                let s = baseScale + pulseRange * sinf(Float(elapsed) * speed)
                 seal.scale = SIMD3<Float>(repeating: s)
                 try? await Task.sleep(nanoseconds: 16_000_000)
             }
