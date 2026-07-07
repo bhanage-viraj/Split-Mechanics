@@ -168,6 +168,7 @@ final class ARService: NSObject, ObservableObject {
     private static let footstepsTextureName = "footsteps"
     private static let bloodPoolTextureName = "blood pool (hint1)"
     private static let sealTextureName = "sealbox(with seal)"
+    private static let goldCoinsTextureName = "gold coins"
 
     // MARK: - Phase 8A Constants
 
@@ -958,10 +959,10 @@ final class ARService: NSObject, ObservableObject {
         let anchor = AnchorEntity(world: matrix_identity_float4x4)
         anchor.name = Self.goldCoinsAnchorName
 
-        let material = SimpleMaterial(
-            color: .init(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0),
-            roughness: 0.15,
-            isMetallic: true
+        let coinSize = planeSize(for: Self.goldCoinsTextureName, baseWidth: 0.06)
+        let material = loadDecalMaterial(
+            named: Self.goldCoinsTextureName,
+            fallbackColor: .init(red: 1.0, green: 0.84, blue: 0.0, alpha: 1.0)
         )
 
         for i in 0..<Self.coinCount {
@@ -972,7 +973,7 @@ final class ARService: NSObject, ObservableObject {
                 start.z + (end.z - start.z) * t
             )
             let coin = ModelEntity(
-                mesh: .generateCylinder(height: 0.008, radius: 0.022),
+                mesh: .generatePlane(width: coinSize.width, depth: coinSize.depth),
                 materials: [material]
             )
             coin.name = "\(Self.goldCoinsAnchorName)_\(i)"
@@ -1116,15 +1117,13 @@ final class ARService: NSObject, ObservableObject {
 
     /// Creates the glowing green second seal placeholder.
     private func makeSecondSealEntity() -> ModelEntity {
-        let material = SimpleMaterial(
-            color: .init(red: 0.1, green: 0.85, blue: 0.3, alpha: 1.0),
-            roughness: 0.2,
-            isMetallic: true
+        let sealSize = planeSize(for: Self.sealTextureName, baseWidth: 0.18)
+        let mesh = MeshResource.generatePlane(width: sealSize.width, depth: sealSize.depth)
+        let material = loadTexturedMaterial(
+            named: "sealbox(empty)",
+            fallbackColor: .init(red: 0.1, green: 0.85, blue: 0.3, alpha: 1.0)
         )
-        let seal = ModelEntity(
-            mesh: .generateBox(size: [0.14, 0.14, 0.14]),
-            materials: [material]
-        )
+        let seal = ModelEntity(mesh: mesh, materials: [material])
         seal.name = Self.seal2EntityName
         seal.generateCollisionShapes(recursive: true)
         seal.components.set(InputTargetComponent())
