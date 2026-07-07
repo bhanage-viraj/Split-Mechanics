@@ -27,6 +27,16 @@ final class GameplayPresenter: ObservableObject {
     // Seal progress
     @Published private(set) var sealsCollected: Int = 0
 
+    // Phase 8A — unclosable frequency note overlay
+    @Published private(set) var showFrequencyNote = false
+    @Published private(set) var targetFrequencyHz: Double = 440.0
+
+    // Phase 8B — frequency scanner
+    @Published private(set) var isFrequencyMatchResolved = false
+    @Published private(set) var sliderValue: Double = 0.5
+    @Published private(set) var signalClarity: Double = 0.0
+    @Published private(set) var frequencyDelta: Double = 0.0
+
     // Phase 7C — keypad digit entry
     @Published private(set) var enteredDigits: [String] = []
 
@@ -94,6 +104,44 @@ final class GameplayPresenter: ObservableObject {
                 self?.sealsCollected = count
             }
             .store(in: &cancellables)
+
+        interactor.$showFrequencyNote
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] show in
+                self?.showFrequencyNote = show
+            }
+            .store(in: &cancellables)
+
+        interactor.$didFrequencyMatch
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] matched in
+                self?.isFrequencyMatchResolved = matched
+            }
+            .store(in: &cancellables)
+
+        interactor.$sliderValue
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] value in
+                self?.sliderValue = value
+            }
+            .store(in: &cancellables)
+
+        interactor.$signalClarity
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] clarity in
+                self?.signalClarity = clarity
+            }
+            .store(in: &cancellables)
+
+        interactor.$frequencyDelta
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] delta in
+                self?.frequencyDelta = delta
+            }
+            .store(in: &cancellables)
+
+        // Target frequency is fixed for this session (GameStateSeed placeholder).
+        targetFrequencyHz = interactor.frequencyTargetHz
     }
 
     // MARK: - Intents
@@ -117,10 +165,16 @@ final class GameplayPresenter: ObservableObject {
         interactor.beginBloodTrailPhase()
     }
 
-    func dismissLetterAndBeginTrail() {
-        showLetterSheet = false
-        beginBloodTrailPhase()
+    func updateFrequencySlider(_ value: Double) {
+        interactor.updateSliderValue(value)
     }
+
+    var currentFrequencyHz: Double {
+        100.0 + sliderValue * 900.0
+    }
+
+    var isFrequencyLocked: Bool { isFrequencyMatchResolved }
+    var showFrequencyScanner: Bool { sealsCollected > 0 }
 
     // MARK: - Keypad Helpers
 
