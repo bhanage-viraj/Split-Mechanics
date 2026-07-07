@@ -51,9 +51,9 @@ struct GameplayView: View {
         } else {
             switch presenter.viewModel.playerRole {
             case .seer:
-                SeerView()
+                SeerView(presenter: presenter)
             case .listener:
-                ListenerView()
+                ListenerView(presenter: presenter)
             case .unassigned:
                 assigningOverlay
             }
@@ -250,7 +250,7 @@ struct LetterSheetView: View {
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Hello")
+                Text("Follow the trail…")
                     .font(.title)
                     .foregroundStyle(.primary)
 
