@@ -154,4 +154,84 @@ enum SpatialMath {
         }
         return true
     }
+
+    /// Projects a world point onto the floor plane.
+    static func projectToFloor(_ point: simd_float3, floorY: Float) -> simd_float3 {
+        simd_float3(point.x, floorY, point.z)
+    }
+
+    /// Evenly samples a quadratic Bézier curve — the imaginary arc for footprint trails.
+    static func quadraticBezierPath(
+        from start: simd_float3,
+        control: simd_float3,
+        to end: simd_float3,
+        stepCount: Int
+    ) -> [simd_float3] {
+        guard stepCount > 1 else { return [start, end] }
+
+        return (0..<stepCount).map { index in
+            let t = Float(index) / Float(stepCount - 1)
+            let inverse = 1 - t
+            let x = inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x
+            let y = inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y
+            let z = inverse * inverse * start.z + 2 * inverse * t * control.z + t * t * end.z
+            return simd_float3(x, y, z)
+        }
+    }
+
+    /// Samples a smooth Catmull-Rom spline through `waypoints` on the floor plane.
+    static func catmullRomPath(waypoints: [simd_float3], samplesPerSegment: Int) -> [simd_float3] {
+        guard waypoints.count >= 2 else { return waypoints }
+        guard samplesPerSegment > 0 else { return waypoints }
+
+        var control = waypoints
+        control.insert(waypoints[0], at: 0)
+        control.append(waypoints[waypoints.count - 1])
+
+        var path: [simd_float3] = []
+        for index in 0..<(control.count - 3) {
+            let p0 = control[index]
+            let p1 = control[index + 1]
+            let p2 = control[index + 2]
+            let p3 = control[index + 3]
+            let segmentSamples = index == control.count - 4 ? samplesPerSegment + 1 : samplesPerSegment
+            for sample in 0..<segmentSamples {
+                let t = Float(sample) / Float(samplesPerSegment)
+                path.append(catmullRomSample(p0: p0, p1: p1, p2: p2, p3: p3, t: t))
+            }
+        }
+        return path
+    }
+
+    private static func catmullRomSample(
+        p0: simd_float3,
+        p1: simd_float3,
+        p2: simd_float3,
+        p3: simd_float3,
+        t: Float
+    ) -> simd_float3 {
+        simd_float3(
+            catmullRomScalar(p0: p0.x, p1: p1.x, p2: p2.x, p3: p3.x, t: t),
+            catmullRomScalar(p0: p0.y, p1: p1.y, p2: p2.y, p3: p3.y, t: t),
+            catmullRomScalar(p0: p0.z, p1: p1.z, p2: p2.z, p3: p3.z, t: t)
+        )
+    }
+
+    private static func catmullRomScalar(
+        p0: Float,
+        p1: Float,
+        p2: Float,
+        p3: Float,
+        t: Float
+    ) -> Float {
+        let t2 = t * t
+        let t3 = t2 * t
+
+        let a = 2 * p1
+        let b = (-p0 + p2) * t
+        let c = (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+        let d = (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+
+        return 0.5 * (a + b + c + d)
+    }
 }

@@ -111,9 +111,15 @@ final class GameplayPresenter: ObservableObject {
         interactor.submitCode(code)
     }
 
-    /// Trigger the blood trail phase (called after the letter is dismissed).
-    func beginBloodTrailPhase() {
+    /// Dismiss the letter sheet and advance to Phase 7 (footsteps + blood pool).
+    func dismissLetterAndBeginPhase7() {
+        showLetterSheet = false
         interactor.beginBloodTrailPhase()
+    }
+
+    func dismissLetterAndBeginTrail() {
+        showLetterSheet = false
+        beginBloodTrailPhase()
     }
 
     // MARK: - Keypad Helpers
