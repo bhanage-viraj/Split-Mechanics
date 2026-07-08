@@ -9,10 +9,19 @@ import SwiftUI
 
 struct ARGameplayControlsOverlay: View {
     let playerRole: PlayerRole
+    let showLeftSealButton: Bool
+    let showRightSealButton: Bool
     @Binding var isFlashlightOn: Bool
 
-    init(playerRole: PlayerRole = .seer, isFlashlightOn: Binding<Bool> = .constant(false)) {
+    init(
+        playerRole: PlayerRole = .seer,
+        isFlashlightOn: Binding<Bool> = .constant(false),
+        showLeftSealButton: Bool = false,
+        showRightSealButton: Bool = false
+    ) {
         self.playerRole = playerRole
+        self.showLeftSealButton = showLeftSealButton
+        self.showRightSealButton = showRightSealButton
         _isFlashlightOn = isFlashlightOn
     }
 
@@ -33,24 +42,26 @@ struct ARGameplayControlsOverlay: View {
         VStack(spacing: 14) {
             switch playerRole {
             case .seer:
-                
+                if showLeftSealButton {
+                    ARGlassToolButton(
+                        systemName: "circle.lefthalf.filled",
+                        iconColor: Color(red: 0.82, green: 0.68, blue: 0.42),
+                        accessibilityLabel: "Left seal"
+                    ) {
+                        print("[ARGameplayControls] Left seal tapped")
+                    }
+                }
 
                 flashlightButton
 
-                ARGlassToolButton(
-                    systemName: "circle.lefthalf.filled",
-                    iconColor: Color(red: 0.82, green: 0.68, blue: 0.42),
-                    accessibilityLabel: "Left seal"
-                ) {
-                    print("[ARGameplayControls] Left seal tapped")
-                }
-
-                ARGlassToolButton(
-                    systemName: "circle.righthalf.filled",
-                    iconColor: Color(red: 0.82, green: 0.68, blue: 0.42),
-                    accessibilityLabel: "Right seal"
-                ) {
-                    print("[ARGameplayControls] Right seal tapped")
+                if showRightSealButton {
+                    ARGlassToolButton(
+                        systemName: "circle.righthalf.filled",
+                        iconColor: Color(red: 0.82, green: 0.68, blue: 0.42),
+                        accessibilityLabel: "Right seal"
+                    ) {
+                        print("[ARGameplayControls] Right seal tapped")
+                    }
                 }
 
             case .listener:
@@ -128,6 +139,8 @@ private struct ARGlassToolButton: View {
 struct ARGameplayControlsTestScreen: View {
     @State private var previewRole: PlayerRole = .seer
     @State private var isFlashlightOn = false
+    @State private var showLeftSealButton = false
+    @State private var showRightSealButton = false
 
     var body: some View {
         ZStack {
@@ -149,7 +162,9 @@ struct ARGameplayControlsTestScreen: View {
 
             ARGameplayControlsOverlay(
                 playerRole: previewRole,
-                isFlashlightOn: $isFlashlightOn
+                isFlashlightOn: $isFlashlightOn,
+                showLeftSealButton: showLeftSealButton,
+                showRightSealButton: showRightSealButton
             )
 
             VStack {
@@ -160,6 +175,17 @@ struct ARGameplayControlsTestScreen: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
+
+                if previewRole == .seer {
+                    HStack(spacing: 16) {
+                        Toggle("Left seal", isOn: $showLeftSealButton)
+                        Toggle("Right seal", isOn: $showRightSealButton)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                }
 
                 Spacer()
             }
@@ -184,7 +210,12 @@ struct ARGameplayControlsTestScreen: View {
             )
             .ignoresSafeArea()
 
-            ARGameplayControlsOverlay(playerRole: .seer, isFlashlightOn: .constant(true))
+            ARGameplayControlsOverlay(
+                playerRole: .seer,
+                isFlashlightOn: .constant(true),
+                showLeftSealButton: true,
+                showRightSealButton: true
+            )
         }
         .toolbarBackground(.hidden, for: .navigationBar)
     }

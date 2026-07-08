@@ -115,7 +115,9 @@ struct GameplayView: View {
         if presenter.viewModel.isRoleResolved && !presenter.showCodeKeypad {
             ARGameplayControlsOverlay(
                 playerRole: presenter.viewModel.playerRole,
-                isFlashlightOn: $isFlashlightOn
+                isFlashlightOn: $isFlashlightOn,
+                showLeftSealButton: presenter.showLeftSealButton,
+                showRightSealButton: presenter.showRightSealButton
             )
         }
     }

@@ -58,6 +58,8 @@ final class GameplayPresenter: ObservableObject {
     var huntStatusMessage: String { interactor.arService.statusMessage }
     var isLetterSpawned: Bool { interactor.arService.isLetterSpawned }
     var hasMergedWorlds: Bool { interactor.arService.hasMergedWorlds }
+    var showLeftSealButton: Bool { false }
+    var showRightSealButton: Bool { false }
     var distanceToLetterText: String {
         guard let distance = interactor.distanceToLetter else { return "--" }
         return String(format: "%.2fm", distance)
