@@ -276,7 +276,7 @@ struct StoryIntroView: View {
         .padding(.horizontal, 44)
     }
 
-    private func briefingColumn(icon: String, title: String) -> some View {
+    private func briefingColumn(icon: String, title: LocalizedStringKey) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.system(size: 16))

@@ -199,7 +199,7 @@ struct ScanningView: View {
         return .blue
     }
 
-    private func benchmarkCard(icon: String, label: String, value: String, color: Color) -> some View {
+    private func benchmarkCard(icon: String, label: LocalizedStringKey, value: String, color: Color) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.title3)

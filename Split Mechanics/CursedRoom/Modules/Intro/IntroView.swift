@@ -35,102 +35,83 @@ struct IntroView: View {
     }
 
     var body: some View {
-        ZStack {
-            // Looping video background - stops looping when main menu comes up
-            VideoPlayerBackground(
-                resourceName: "background",
-                fileExtension: "mp4",
-                overlayOpacity: 0.35,
-                isLooping: phase < .menu
-            )
-
-            // Content layers
-            GeometryReader { proxy in
-                VStack(spacing: 0) {
-                    Spacer()
-                        .frame(height: phase == .menu ? proxy.size.height * 0.48 : proxy.size.height * 0.48)
-
-                    // Title group — starts centered, ends near top.
-                    titleGroup
-                        .offset(y: titleOffset)
-
-                    subtitleGroup
-                        .frame(height: phase >= .animating ? 60 : 0)
-                        .clipped()
-                        .opacity(subtitleOpacity)
-                        .offset(y: textGroupOffset)
-
-                    Spacer()
-                        .frame(minHeight: phase >= .animating ? 24 : 0)
-
-                    requirementsPanel
-                        .padding(.horizontal, 20)
-                        .frame(height: phase >= .animating ? nil : 0)
-                        .clipped()
-                        .opacity(menuContentOpacity)
-                        .offset(y: menuContentOpacity > 0 ? 0 : 30)
-
-                    Spacer()
-                        .frame(minHeight: phase == .menu ? 28 : (phase == .animating ? 80 : 0))
-
-                    Button(action: onStartInvestigation) {
-                        Text("Start Investigation")
-                    }
-                    .buttonStyle(GhostPrimaryButtonStyle())
-                    .padding(.horizontal, 36)
-                    .padding(.bottom, phase == .menu ? 42 : 0)
-                    .frame(height: phase == .menu ? nil : 0)
-                    .clipped()
-                    .opacity(buttonOpacity)
-                    .offset(y: buttonOpacity > 0 ? 0 : 20)
-                }
-                .frame(width: proxy.size.width)
-            }
-
-            VStack {
-                HStack {
-                    Spacer()
-                    languageToggleButton
-                }
-                Spacer()
-            }
-            .padding(.top, 54)
-            .padding(.trailing, 20)
-        }
-        .id(languageManager.current.rawValue)
-        .ignoresSafeArea()
-        .onAppear {
-            if playIntroAnimation {
-                startIntroSequence()
-            } else {
-                showMenuImmediately()
-            }
-        }
-    }
-
-    // MARK: - Language Toggle
-
-    private var languageToggleButton: some View {
-        Button(action: languageManager.toggleLanguage) {
-            Text(languageManager.current == .english ? "ES" : "EN")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.ghostWhite.opacity(0.9))
-                .frame(width: 36, height: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.black.opacity(0.45))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.ghostGold.opacity(0.35), lineWidth: 1)
-                        )
+        NavigationStack {
+            ZStack {
+                // Looping video background - stops looping when main menu comes up
+                VideoPlayerBackground(
+                    resourceName: "background",
+                    fileExtension: "mp4",
+                    overlayOpacity: 0.35,
+                    isLooping: phase < .menu
                 )
+
+                // Content layers
+                GeometryReader { proxy in
+                    VStack(spacing: 0) {
+                        Spacer()
+                            .frame(height: phase == .menu ? proxy.size.height * 0.48 : proxy.size.height * 0.48)
+
+                        // Title group — starts centered, ends near top.
+                        titleGroup
+                            .offset(y: titleOffset)
+
+                        subtitleGroup
+                            .frame(height: phase >= .animating ? 60 : 0)
+                            .clipped()
+                            .opacity(subtitleOpacity)
+                            .offset(y: textGroupOffset)
+
+                        Spacer()
+                            .frame(minHeight: phase >= .animating ? 24 : 0)
+
+                        requirementsPanel
+                            .padding(.horizontal, 20)
+                            .frame(height: phase >= .animating ? nil : 0)
+                            .clipped()
+                            .opacity(menuContentOpacity)
+                            .offset(y: menuContentOpacity > 0 ? 0 : 30)
+
+                        Spacer()
+                            .frame(minHeight: phase == .menu ? 28 : (phase == .animating ? 80 : 0))
+
+                        Button(action: onStartInvestigation) {
+                            Text("Start Investigation")
+                        }
+                        .buttonStyle(GhostPrimaryButtonStyle())
+                        .padding(.horizontal, 36)
+                        .padding(.bottom, phase == .menu ? 42 : 0)
+                        .frame(height: phase == .menu ? nil : 0)
+                        .clipped()
+                        .opacity(buttonOpacity)
+                        .offset(y: buttonOpacity > 0 ? 0 : 20)
+                    }
+                    .frame(width: proxy.size.width)
+                }
+            }
+            .id(languageManager.current.rawValue)
+            .ignoresSafeArea()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: languageManager.toggleLanguage) {
+                        Text(languageManager.current == .english ? "ES" : "EN")
+                            .fontWeight(.semibold)
+                    }
+                    .accessibilityLabel(
+                        languageManager.current == .english
+                            ? Text("Switch to Spanish")
+                            : Text("Switch to English")
+                    )
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .onAppear {
+                if playIntroAnimation {
+                    startIntroSequence()
+                } else {
+                    showMenuImmediately()
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-            languageManager.current == .english
-                ? String(localized: "Switch to Spanish")
-                : String(localized: "Switch to English")
-        )
     }
 
     // MARK: - Title Group
@@ -187,15 +168,15 @@ struct IntroView: View {
 
     private var requirementsPanel: some View {
         HStack(spacing: 0) {
-            requirementCard(icon: "person.2.fill", title: String(localized: "2 PLAYERS"), subtitle: String(localized: "You depend on\neach other."))
-            
+            requirementCard(icon: "person.2.fill", title: "2 PLAYERS", subtitle: "You depend on\neach other.")
+
             verticalDivider
-            
-            requirementCard(icon: "location.fill.viewfinder", title: String(localized: "REAL WORLD"), subtitle: String(localized: "Move around to\nfind clues."))
-            
+
+            requirementCard(icon: "location.fill.viewfinder", title: "REAL WORLD", subtitle: "Move around to\nfind clues.")
+
             verticalDivider
-            
-            requirementCard(icon: "headphones", title: String(localized: "HEADPHONES"), subtitle: String(localized: "Every sound\nmatters."))
+
+            requirementCard(icon: "headphones", title: "HEADPHONES", subtitle: "Every sound\nmatters.")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 24)
@@ -215,7 +196,7 @@ struct IntroView: View {
             .frame(width: 1, height: 50)
     }
 
-    private func requirementCard(icon: String, title: String, subtitle: String) -> some View {
+    private func requirementCard(icon: String, title: LocalizedStringKey, subtitle: LocalizedStringKey) -> some View {
         VStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 26))
