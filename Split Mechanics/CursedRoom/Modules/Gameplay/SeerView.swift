@@ -16,8 +16,8 @@ struct SeerView: View {
         ZStack {
             if showRolePopup {
                 RoleRevealPopup(
-                    roleTitle: "You are the Seer",
-                    roleDescription: "You can see the hidden world, but you cannot hear it.",
+                    roleTitle: String(localized: "You are the Seer"),
+                    roleDescription: String(localized: "You can see the hidden world, but you cannot hear it."),
                     onDismiss: { withAnimation(.easeOut(duration: 0.25)) { showRolePopup = false } }
                 )
             }

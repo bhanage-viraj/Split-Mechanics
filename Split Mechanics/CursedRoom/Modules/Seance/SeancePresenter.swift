@@ -29,8 +29,8 @@ final class SeancePresenter: ObservableObject {
     init(interactor: SeanceInteractor) {
         self.interactor = interactor
         self.viewModel = ViewModel(
-            prompt: "Stand shoulder-to-shoulder and look at the center of the room.",
-            status: "Starting AR…",
+            prompt: String(localized: "Stand shoulder-to-shoulder and look at the center of the room."),
+            status: String(localized: "Starting AR…"),
             showActivity: true
         )
         bind()
@@ -47,8 +47,8 @@ final class SeancePresenter: ObservableObject {
         .sink { [weak self] merged, dollSpawned, status in
             self?.viewModel = ViewModel(
                 prompt: dollSpawned
-                    ? "Tap the doll…"
-                    : "Stand shoulder-to-shoulder and look at the center of the room.",
+                    ? String(localized: "Tap the doll…")
+                    : String(localized: "Stand shoulder-to-shoulder and look at the center of the room."),
                 status: status,
                 showActivity: !merged || !dollSpawned
             )

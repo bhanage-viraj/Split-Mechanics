@@ -40,12 +40,30 @@ struct Vector3: Codable, Sendable, Equatable {
 
 // MARK: - Scanned room model
 
+enum SurfaceCategory: String, Codable, Sendable {
+    case wall
+    case door
+    case window
+    case opening
+    case floor
+
+    var localizedName: String {
+        switch self {
+        case .wall: String(localized: "wall")
+        case .door: String(localized: "door")
+        case .window: String(localized: "window")
+        case .opening: String(localized: "opening")
+        case .floor: String(localized: "floor")
+        }
+    }
+}
+
 /// A lightweight, serializable snapshot of a RoomPlan `CapturedRoom`.
 /// We keep only the coordinates/dimensions the game needs — no 3D mesh.
 struct ScannedRoom: Codable, Sendable, Equatable {
 
     struct Surface: Codable, Sendable, Equatable {
-        var category: String
+        var category: SurfaceCategory
         var position: Vector3
         var dimensions: Vector3
         var rotation: Vector3
@@ -71,7 +89,7 @@ struct ScannedRoom: Codable, Sendable, Equatable {
 
 extension ScannedRoom {
     init(from room: CapturedRoom) {
-        func surface(_ s: CapturedRoom.Surface, _ category: String) -> Surface {
+        func surface(_ s: CapturedRoom.Surface, _ category: SurfaceCategory) -> Surface {
             Surface(
                 category: category,
                 position: Vector3(s.transform.position),
@@ -80,13 +98,13 @@ extension ScannedRoom {
             )
         }
 
-        walls = room.walls.map { surface($0, "wall") }
-        doors = room.doors.map { surface($0, "door") }
-        windows = room.windows.map { surface($0, "window") }
-        openings = room.openings.map { surface($0, "opening") }
+        walls = room.walls.map { surface($0, .wall) }
+        doors = room.doors.map { surface($0, .door) }
+        windows = room.windows.map { surface($0, .window) }
+        openings = room.openings.map { surface($0, .opening) }
 
         if let firstFloor = room.floors.first {
-            floor = surface(firstFloor, "floor")
+            floor = surface(firstFloor, .floor)
         } else {
             floor = nil
         }
@@ -104,6 +122,12 @@ extension ScannedRoom {
     }
 
     var summary: String {
-        "\(walls.count) walls · \(doors.count) doors · \(windows.count) windows · \(objects.count) objects"
+        String(
+            format: String(localized: "%lld walls · %lld doors · %lld windows · %lld objects"),
+            walls.count,
+            doors.count,
+            windows.count,
+            objects.count
+        )
     }
 }

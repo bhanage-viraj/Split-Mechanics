@@ -33,6 +33,7 @@ struct NetworkEvent: Codable, Sendable {
         case testMessage
         case ping
         case pong
+        case startScanning = "start_scanning"
         case beginSeance = "begin_seance"
         case dollTouched = "doll_touched"
         case roleAssignment = "role_assignment"
@@ -57,6 +58,12 @@ struct NetworkEvent: Codable, Sendable {
 
     static func testMessage(_ message: String) -> NetworkEvent {
         NetworkEvent(eventType: EventType.testMessage.rawValue, payload: message)
+    }
+
+    /// Host → Guest: both devices leave the connected lobby state and enter
+    /// Phase 3, where the Host scans and the Guest waits.
+    static func startScanning() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.startScanning.rawValue, payload: nil)
     }
 
     /// Host → Guest: room scan finished, move both devices into the seance (Phase 4).

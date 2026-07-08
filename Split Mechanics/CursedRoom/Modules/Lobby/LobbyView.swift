@@ -4,273 +4,295 @@ import SwiftUI
 struct LobbyView: View {
 
     @StateObject private var presenter: LobbyPresenter
-    @StateObject private var router: LobbyRouter
+    private let onBackToMenu: () -> Void
+    private let onStartInvestigation: () -> Void
 
-    init(networkService: NetworkService) {
+    init(
+        networkService: NetworkService,
+        onBackToMenu: @escaping () -> Void = {},
+        onStartInvestigation: @escaping () -> Void = {}
+    ) {
         let interactor = LobbyInteractor(networkService: networkService)
         let presenter = LobbyPresenter(interactor: interactor)
         _presenter = StateObject(wrappedValue: presenter)
-        _router = StateObject(wrappedValue: LobbyRouter())
+        self.onBackToMenu = onBackToMenu
+        self.onStartInvestigation = onStartInvestigation
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color(white: 0.04)
-                    .ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                if router.shouldNavigateToScanning {
-                    connectedPlaceholder
+            Group {
+                if presenter.networkState == .connected {
+                    ConnectedView(
+                        playerName: presenter.playerName,
+                        peerName: presenter.peerName.isEmpty ? "Friend_1" : presenter.peerName,
+                        isHost: presenter.isHost,
+                        onContinue: {
+                            presenter.didTapContinueConnected()
+                            onStartInvestigation()
+                        },
+                        onExit: { presenter.didTapDisconnect() }
+                    )
+                } else if presenter.networkState == .hosting {
+                    WaitingForPlayerView(
+                        playerName: presenter.playerName,
+                        onCancel: { presenter.didTapDisconnect() }
+                    )
                 } else {
                     lobbyContent
                 }
             }
-            .navigationTitle("Lobby")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Disconnect") {
-                        presenter.didTapDisconnect()
-                    }
-                    .foregroundStyle(.red)
-                    .disabled(presenter.networkState == .disconnected)
-                }
+        }
+        .onAppear {
+            presenter.didRequestInvestigationStart = false
+        }
+        .alert(
+            "Player Disconnected",
+            isPresented: $presenter.showPeerDisconnectedAlert
+        ) {
+            Button("Back to Lobby", role: .cancel) {
+                presenter.didDismissPeerDisconnectedAlert()
             }
-            .onAppear {
-                router.observeConnection(from: presenter)
-            }
-            .alert(
-                "Player Disconnected",
-                isPresented: $presenter.showPeerDisconnectedAlert
-            ) {
-                Button("Back to Lobby", role: .cancel) {
-                    presenter.didDismissPeerDisconnectedAlert()
-                }
-            } message: {
-                Text("The other player left the game. You've been returned to the lobby.")
-            }
+        } message: {
+            Text("The other player left the game. You've been returned to the lobby.")
         }
     }
 
     private var lobbyContent: some View {
-        VStack(spacing: 24) {
-            Text("The Cursed Room")
-                .font(.largeTitle.bold())
-                .foregroundStyle(.white)
+        ZStack {
+            VideoPlayerBackground(
+                resourceName: "background2",
+                fileExtension: "mov",
+                overlayOpacity: 0.35
+            )
 
-            Text("Local Co-Op Lobby")
-                .font(.title3)
-                .foregroundStyle(.gray)
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.top, 10)
 
-            Spacer()
+                SectionLabel(text: "Lobby")
+                    .padding(.top, 46)
 
-            VStack(spacing: 16) {
-                Button(action: presenter.didTapHost) {
-                    HStack {
-                        Image(systemName: "wifi.router")
-                        Text("Host Game")
-                    }
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(presenter.networkState == .hosting ? Color.red : Color.blue)
-                    )
+                diamondDivider
+                    .padding(.top, 14)
+
+                playWithFriendsTitle
+                    .padding(.top, 14)
+
+                PlayerBadge(name: presenter.playerName)
+                    .padding(.top, 8)
+
+                gothicDivider
+                    .padding(.top, 24)
+
+                if presenter.networkState == .browsing {
+                    friendSelectList
+                        .padding(.top, 12)
+                        .padding(.horizontal, 28)
                 }
-                .disabled(presenter.networkState != .disconnected)
 
-                Button(action: presenter.didTapJoin) {
-                    HStack {
-                        Image(systemName: "person.2.fill")
-                        Text("Join Game")
-                    }
-                    .font(.headline)
+                Spacer()
+
+                bottomButtons
+                    .padding(.horizontal, 26)
+                    .padding(.bottom, 40)
+            }
+        }
+    }
+
+
+    private var topBar: some View {
+        HStack {
+            Button(action: {
+                presenter.didTapDisconnect()
+                onBackToMenu()
+            }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
+                    .frame(width: 40, height: 40)
                     .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(presenter.networkState == .browsing ? Color.red : Color.green)
+                        Circle()
+                            .fill(Color.ghostSurface.opacity(0.6))
                     )
-                }
-                .disabled(presenter.networkState != .disconnected)
-            }
-            .padding(.horizontal, 32)
-
-            if presenter.networkState == .browsing {
-                peerListSection
-            }
-
-            statusSection
-
-            if !presenter.receivedMessages.isEmpty {
-                messagesSection
-            }
-
-            if presenter.isConnected {
-                debugSection
-                latencySection
             }
 
             Spacer()
         }
-        .padding()
+        .padding(.horizontal, 20)
     }
 
-    private var connectedPlaceholder: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.green)
 
-            Text("Connected")
-                .font(.title.bold())
-                .foregroundStyle(.white)
+    private var playWithFriendsTitle: some View {
+        HStack(spacing: 8) {
+            Text("PLAY WITH")
+                .font(.system(size: 22, weight: .bold, design: .serif))
+                .foregroundStyle(Color.ghostGold)
+                .tracking(2)
 
-            Text("Lobby dismissed — ready for Phase 3 (Scanning).")
-                .font(.subheadline)
-                .foregroundStyle(.gray)
-                .multilineTextAlignment(.center)
-
-            if !presenter.receivedMessages.isEmpty {
-                messagesSection
-            }
-
-            if presenter.isConnected {
-                debugSection
-                latencySection
-            }
+            Text("FRIENDS")
+                .redAccentStyle(size: 22, italic: true)
+                .tracking(2)
         }
-        .padding()
     }
 
-    private var peerListSection: some View {
-        Group {
-            Text("Discovered Hosts")
-                .font(.headline)
-                .foregroundStyle(.gray)
+    private var gothicDivider: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.ghostRed.opacity(0.55))
+                .frame(height: 1)
+
+            Circle()
+                .fill(Color.ghostRedBright)
+                .frame(width: 8, height: 8)
+                .padding(.horizontal, 6)
+
+            Rectangle()
+                .fill(Color.ghostRed.opacity(0.55))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 44)
+    }
+
+    private var diamondDivider: some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(Color.ghostWhite.opacity(0.18))
+                .frame(width: 44, height: 1)
+
+            Rectangle()
+                .fill(Color.ghostRedBright)
+                .frame(width: 6, height: 6)
+                .rotationEffect(.degrees(45))
+
+            Rectangle()
+                .fill(Color.ghostWhite.opacity(0.18))
+                .frame(width: 44, height: 1)
+        }
+    }
+
+
+    private var friendSelectList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("SELECT A FRIEND")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.ghostWhite)
+                .tracking(1)
 
             if presenter.discoveredPeers.isEmpty {
-                Text("Scanning…")
-                    .foregroundStyle(.gray)
-                    .italic()
-            } else {
-                List(presenter.discoveredPeers, id: \.self) { peer in
-                    Button {
-                        presenter.didTapPeer(peer)
-                    } label: {
-                        HStack {
-                            Image(systemName: "wifi.router")
-                            if case let .service(name, _, _, _) = peer.endpoint {
-                                Text(name)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(.gray)
-                        }
-                        .foregroundStyle(.white)
-                    }
-                }
-                .listStyle(.plain)
-                .frame(height: CGFloat(min(presenter.discoveredPeers.count, 5)) * 50)
-            }
-        }
-    }
-
-    private var statusSection: some View {
-        Text(presenter.statusMessage)
-            .font(.caption)
-            .foregroundStyle(presenter.networkState == .connected ? .green : .yellow)
-            .multilineTextAlignment(.center)
-    }
-
-    private var messagesSection: some View {
-        Group {
-            Text("Received Messages")
-                .font(.headline)
-                .foregroundStyle(.gray)
-
-            ForEach(Array(presenter.receivedMessages.enumerated()), id: \.offset) { _, event in
                 HStack {
-                    Text("◉ \(event.eventType)")
-                        .foregroundStyle(.green)
-                    if let payload = event.payload {
-                        Text("— \(payload)")
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(0.8)
+                    Text("Scanning…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.ghostGray)
+                }
+                .frame(maxWidth: .infinity, minHeight: 92, alignment: .center)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(presenter.discoveredPeers.enumerated()), id: \.offset) { index, peer in
+                        Button {
+                            presenter.didTapPeer(peer)
+                        } label: {
+                            friendRow(
+                                peer: peer,
+                                isSelected: presenter.selectedPeer?.displayName == peer.displayName
+                            )
+                        }
+
+                        if index < presenter.discoveredPeers.count - 1 {
+                            Divider()
+                                .background(Color.white.opacity(0.06))
+                                .padding(.horizontal, 10)
+                        }
                     }
                 }
-                .font(.subheadline)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.black.opacity(0.20))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.ghostGold.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+
+    private func friendRow(peer: NWBrowser.Result, isSelected: Bool) -> some View {
+        HStack {
+            Image(systemName: "person.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.ghostRedBright)
+                .frame(width: 36, height: 36)
+                .background(
+                    Circle()
+                        .fill(Color.ghostRedBright.opacity(0.15))
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(peer.displayName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("Investigator")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ghostGray)
+            }
+
+            Spacer()
+
+            Circle()
+                .stroke(isSelected ? Color.ghostRedBright : Color.ghostGray.opacity(0.4), lineWidth: 1.5)
+                .frame(width: 22, height: 22)
+                .overlay(
+                    Circle()
+                        .fill(isSelected ? Color.ghostRedBright : Color.clear)
+                        .frame(width: 12, height: 12)
+                )
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 10)
+    }
+
+    private var bottomButtons: some View {
+        VStack(spacing: 0) {
+            if presenter.networkState == .disconnected {
+                Button(action: presenter.didTapHost) {
+                    Text("HOST GAME")
+                }
+                .buttonStyle(GhostPrimaryButtonStyle())
+
+                diamondDivider
+                    .padding(.vertical, 14)
+
+                Button(action: presenter.didTapJoin) {
+                    Text("Join Game")
+                }
+                .buttonStyle(GhostDimButtonStyle())
+            } else if presenter.networkState == .browsing {
+                Button(action: presenter.didTapJoin) {
+                    Text("Join Game")
+                }
+                .buttonStyle(GhostPrimaryButtonStyle())
+                .disabled(presenter.selectedPeer == nil)
+                .opacity(presenter.selectedPeer == nil ? 0.55 : 1)
             }
         }
     }
+}
 
-    private var debugSection: some View {
-        Group {
-            Divider()
-                .background(Color.gray)
-
-            Text("DEBUG")
-                .font(.caption.bold())
-                .foregroundStyle(.orange)
-
-            Button("Send \"Hello Network\"") {
-                presenter.didTapSendTest()
-            }
-            .disabled(presenter.networkState != .connected)
-            .font(.subheadline)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(Color.orange.opacity(0.2))
-            .foregroundStyle(.orange)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+private extension NWBrowser.Result {
+    var displayName: String {
+        if case let .service(name, _, _, _) = endpoint {
+            return name
         }
-    }
-
-    // MARK: - Latency Test Section
-
-    private var latencySection: some View {
-        VStack(spacing: 10) {
-            Divider()
-                .background(Color.gray)
-
-            Text("LATENCY TEST")
-                .font(.caption.bold())
-                .foregroundStyle(.cyan)
-
-            Text(presenter.latencySummary)
-                .font(.title3.monospacedDigit().bold())
-                .foregroundStyle(.white)
-
-            Text(presenter.latencyDetail)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.gray)
-
-            HStack(spacing: 12) {
-                Button("Ping Once") {
-                    presenter.didTapPingOnce()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.cyan)
-
-                Button(presenter.latency.isLooping ? "Stop Auto" : "Auto Ping") {
-                    presenter.didTapToggleAutoPing()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(presenter.latency.isLooping ? .red : .blue)
-
-                Button("Reset") {
-                    presenter.didTapResetLatency()
-                }
-                .buttonStyle(.bordered)
-                .tint(.gray)
-            }
-            .font(.subheadline)
-            .disabled(presenter.networkState != .connected)
-        }
+        return "Friend_1"
     }
 }
 
