@@ -5,6 +5,7 @@ struct LobbyView: View {
 
     @StateObject private var presenter: LobbyPresenter
     @StateObject private var router: LobbyRouter
+    @State private var showControlsTest = false
 
     init(networkService: NetworkService) {
         let interactor = LobbyInteractor(networkService: networkService)
@@ -38,6 +39,9 @@ struct LobbyView: View {
             }
             .onAppear {
                 router.observeConnection(from: presenter)
+            }
+            .navigationDestination(isPresented: $showControlsTest) {
+                ARGameplayControlsTestScreen()
             }
             .alert(
                 "Player Disconnected",
@@ -96,6 +100,24 @@ struct LobbyView: View {
                     )
                 }
                 .disabled(presenter.networkState != .disconnected)
+            }
+            .padding(.horizontal, 32)
+
+            Button {
+                showControlsTest = true
+            } label: {
+                HStack {
+                    Image(systemName: "gamecontroller.fill")
+                    Text("Test AR Controls")
+                }
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(.white.opacity(0.25), lineWidth: 1)
+                )
             }
             .padding(.horizontal, 32)
 

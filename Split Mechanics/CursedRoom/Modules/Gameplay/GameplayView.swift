@@ -9,22 +9,31 @@ import SwiftUI
 
 struct GameplayView: View {
     @ObservedObject private var presenter: GameplayPresenter
+    @State private var isFlashlightOn = false
 
     init(presenter: GameplayPresenter) {
         self.presenter = presenter
     }
 
     var body: some View {
-        ZStack {
-            backgroundLayer
-            roleOverlay
-            keypadOverlay
+        NavigationStack {
+            ZStack {
+                backgroundLayer
+                roleOverlay
+                arControlsOverlay
+                keypadOverlay
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $presenter.showLetterSheet) {
             LetterSheetView()
         }
         .onAppear {
             presenter.onAppear()
+            presenter.setCameraFeedEnabled(isFlashlightOn)
+        }
+        .onChange(of: isFlashlightOn) { _, enabled in
+            presenter.setCameraFeedEnabled(enabled)
         }
         .onDisappear { presenter.onDisappear() }
     }
@@ -34,9 +43,13 @@ struct GameplayView: View {
     @ViewBuilder
     private var backgroundLayer: some View {
         if presenter.viewModel.isRoleResolved {
-            ARViewContainer(arView: presenter.arView)
-                .blur(radius: presenter.viewModel.playerRole == .listener ? 20 : 0)
-                .ignoresSafeArea()
+            if isFlashlightOn {
+                ARViewContainer(arView: presenter.arView)
+                    .blur(radius: presenter.viewModel.playerRole == .listener ? 20 : 0)
+                    .ignoresSafeArea()
+            } else {
+                Color.black.ignoresSafeArea()
+            }
         } else {
             Color.black.ignoresSafeArea()
         }
@@ -93,6 +106,30 @@ struct GameplayView: View {
         .background(.black.opacity(0.7), in: Capsule())
         .padding(.top, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    // MARK: - AR Controls Overlay
+
+    @ViewBuilder
+    private var arControlsOverlay: some View {
+        if presenter.viewModel.isRoleResolved && !presenter.showCodeKeypad {
+            ARGameplayControlsOverlay(
+                playerRole: presenter.viewModel.playerRole,
+                isFlashlightOn: $isFlashlightOn
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var debugOverlay: some View {
+        if presenter.viewModel.isRoleResolved {
+            GameplayDebugOverlay(
+                lines: presenter.debugStatusLines,
+                events: presenter.debugEvents
+            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .padding(.leading, 12)
+        }
     }
 
     // MARK: - Code Keypad (Phase 7C)
@@ -261,5 +298,63 @@ struct LetterSheetView: View {
                 }
             }
         }
+    }
+}
+
+private struct GameplayDebugOverlay: View {
+    let lines: [String]
+    let events: [String]
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("DEBUG")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.green)
+
+                    ForEach(lines, id: \.self) { line in
+                        Text(line)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                if !events.isEmpty {
+                    Divider()
+                        .overlay(.white.opacity(0.18))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("EVENTS")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.yellow)
+
+                        ForEach(events.reversed(), id: \.self) { event in
+                            Text(event)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.white.opacity(0.92))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 250, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.black.opacity(0.72))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(.white.opacity(0.15), lineWidth: 1)
+            )
+
+            Spacer()
+        }
+        .allowsHitTesting(false)
     }
 }

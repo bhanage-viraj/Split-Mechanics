@@ -81,6 +81,8 @@ final class ARService: NSObject, ObservableObject {
     private var dollAnchorAdded = false    // Host has added the ARAnchor once
     private var dollAnchorEntity: AnchorEntity?
     private var hasStarted = false
+    private var isCameraFeedPaused = false
+    private var pausedConfiguration: ARWorldTrackingConfiguration?
 
     private var floorPlanes: [UUID: ARPlaneAnchor] = [:]
     private var wallPlanes: [UUID: ARPlaneAnchor] = [:]
@@ -184,8 +186,29 @@ final class ARService: NSObject, ObservableObject {
     func stop() {
         guard hasStarted else { return }
         hasStarted = false
+        isCameraFeedPaused = false
+        pausedConfiguration = nil
         arView.session.pause()
         UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    /// Pauses or resumes the AR camera feed without tearing down the session.
+    func setCameraFeedEnabled(_ enabled: Bool) {
+        guard hasStarted else { return }
+
+        if enabled {
+            guard isCameraFeedPaused, let config = pausedConfiguration else { return }
+            arView.session.run(config)
+            isCameraFeedPaused = false
+            pausedConfiguration = nil
+            print("🕯️ [AR] Camera feed enabled")
+        } else {
+            guard !isCameraFeedPaused else { return }
+            pausedConfiguration = arView.session.configuration as? ARWorldTrackingConfiguration
+            arView.session.pause()
+            isCameraFeedPaused = true
+            print("🕯️ [AR] Camera feed disabled")
+        }
     }
 
     // MARK: - Collaboration In
