@@ -24,9 +24,11 @@ struct RoomCaptureContainer: UIViewRepresentable {
 
 struct ScanningView: View {
     @ObservedObject private var presenter: ScanningPresenter
+    let onCancel: () -> Void
 
-    init(presenter: ScanningPresenter) {
+    init(presenter: ScanningPresenter, onCancel: @escaping () -> Void = {}) {
         self.presenter = presenter
+        self.onCancel = onCancel
     }
 
     var body: some View {
@@ -34,12 +36,91 @@ struct ScanningView: View {
             RoomCaptureContainer(roomCaptureView: presenter.roomCaptureView)
                 .ignoresSafeArea()
 
-            VStack {
-                topStatusSection
-                Spacer()
-                bottomControlSection
+            if presenter.showBeforeYouBegin {
+                // "Before You Begin" popup overlay
+                Color.black.opacity(0.4)
+                    .background(.ultraThinMaterial)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    // Top bar with back button
+                    HStack {
+                        Button(action: onCancel) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(
+                                    Circle()
+                                        .fill(Color.ghostSurface.opacity(0.6))
+                                )
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+
+                    Spacer()
+
+                    // Guidelines Card
+                    VStack(alignment: .leading, spacing: 24) {
+                        Text("Before You Begin")
+                            .font(.system(size: 22, weight: .bold, design: .serif))
+                            .foregroundStyle(Color.ghostWhite)
+                            .padding(.bottom, 8)
+
+                        BeforeYouBeginGuidelineRow(
+                            iconName: "headphones",
+                            title: "Wear headphones",
+                            subtitle: "For the best immersive experience."
+                        )
+
+                        BeforeYouBeginGuidelineRow(
+                            iconName: "house.fill",
+                            title: "Play indoors",
+                            subtitle: "In a dark and quiet environment."
+                        )
+
+                        BeforeYouBeginGuidelineRow(
+                            iconName: "doc.text",
+                            title: "Follow instructions",
+                            subtitle: "On-screen guidance will lead the way."
+                        )
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 28)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.black.opacity(0.45))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 28)
+
+                    Spacer()
+
+                    // Scan the Space Button
+                    Button(action: {
+                        presenter.startScanningClicked()
+                    }) {
+                        Text("Scan the Space")
+                    }
+                    .buttonStyle(GhostSecondaryButtonStyle())
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 40)
+                }
+            } else {
+                // Actual scanning UI overlay
+                VStack {
+                    topStatusSection
+                    Spacer()
+                    bottomControlSection
+                }
+                .padding()
             }
-            .padding()
         }
         .onAppear { presenter.onAppear() }
         .alert(
@@ -134,5 +215,36 @@ struct ScanningView: View {
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+// MARK: - Guidelines Row Helper
+
+struct BeforeYouBeginGuidelineRow: View {
+    let iconName: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: iconName)
+                .font(.system(size: 20))
+                .foregroundStyle(Color.ghostWhite)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.12))
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.ghostWhite)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.ghostWhite.opacity(0.6))
+            }
+            Spacer()
+        }
     }
 }

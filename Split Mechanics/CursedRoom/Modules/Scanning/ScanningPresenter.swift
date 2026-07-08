@@ -50,6 +50,7 @@ struct ScanningViewModel: Equatable {
 @MainActor
 final class ScanningPresenter: ObservableObject {
     @Published private(set) var viewModel: ScanningViewModel
+    @Published var showBeforeYouBegin: Bool = true
 
     private let interactor: ScanningBusinessLogic
     private weak var router: ScanningRouterProtocol?
@@ -172,6 +173,13 @@ final class ScanningPresenter: ObservableObject {
     // MARK: - Intents from View
 
     func onAppear() {
+        if !showBeforeYouBegin {
+            interactor.startScanning()
+        }
+    }
+
+    func startScanningClicked() {
+        showBeforeYouBegin = false
         interactor.startScanning()
     }
 

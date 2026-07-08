@@ -21,6 +21,14 @@ struct ConnectedView: View {
     @State private var avatarsOpacity: Double = 0
     @State private var messageOpacity: Double = 0
 
+    private var hostName: String {
+        isHost ? playerName : peerName
+    }
+
+    private var guestName: String {
+        isHost ? peerName : playerName
+    }
+
     var body: some View {
         ZStack {
             VideoPlayerBackground(
@@ -34,15 +42,17 @@ struct ConnectedView: View {
             VStack(spacing: 0) {
                 // Top bar
                 HStack {
-                    Button(action: onExit) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(
-                                Circle()
-                                    .fill(Color.ghostSurface.opacity(0.6))
-                            )
+                    if !isHost {
+                        Button(action: onExit) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(
+                                    Circle()
+                                        .fill(Color.ghostSurface.opacity(0.6))
+                                )
+                        }
                     }
                     Spacer()
                 }
@@ -52,24 +62,29 @@ struct ConnectedView: View {
                 SectionLabel(text: "Lobby")
                     .padding(.top, 46)
 
+                diamondDivider
+                    .padding(.top, 14)
+
                 Text("CONNECTED")
                     .font(.system(size: 23, weight: .bold, design: .serif))
                     .foregroundStyle(Color.ghostGold)
                     .tracking(3)
-                    .padding(.top, 8)
+                    .padding(.top, 14)
 
                 // Player badge
                 PlayerBadge(name: playerName)
                     .padding(.top, 8)
 
                 gothicDivider
-                    .padding(.top, 20)
+                    .padding(.top, 24)
 
                 Spacer()
 
                 VStack(spacing: 0) {
+                    Spacer()
+
                     HStack(spacing: 26) {
-                        playerAvatar(name: playerName)
+                        playerAvatar(name: hostName)
 
                         Image(systemName: "link")
                             .font(.system(size: 31, weight: .semibold))
@@ -77,25 +92,29 @@ struct ConnectedView: View {
                             .scaleEffect(linkScale)
                             .opacity(linkOpacity)
 
-                        playerAvatar(name: peerName)
+                        playerAvatar(name: guestName)
                     }
                     .opacity(avatarsOpacity)
+
+                    Spacer()
+                        .frame(height: 32)
 
                     Text("Both investigators are ready!")
                         .font(.system(size: 14, weight: .medium, design: .serif))
                         .foregroundStyle(Color.ghostGold)
-                        .padding(.top, 28)
                         .opacity(messageOpacity)
 
-                    Text(isHost ? "The investigation can now continue." : "Wait for the Host to start the investigation.")
+                    Text(isHost ? "The investigation can begin." : "Wait for \(hostName) to start the investigation.")
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(Color.ghostWhite.opacity(0.58))
                         .multilineTextAlignment(.center)
-                        .padding(.top, 6)
+                        .padding(.top, 8)
                         .opacity(messageOpacity)
+
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 288)
+                .frame(height: 360)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
                         .fill(Color.black.opacity(0.54))
@@ -169,6 +188,23 @@ struct ConnectedView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(width: 86)
+        }
+    }
+
+    private var diamondDivider: some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(Color.ghostWhite.opacity(0.18))
+                .frame(width: 44, height: 1)
+
+            Rectangle()
+                .fill(Color.ghostRedBright)
+                .frame(width: 6, height: 6)
+                .rotationEffect(.degrees(45))
+
+            Rectangle()
+                .fill(Color.ghostWhite.opacity(0.18))
+                .frame(width: 44, height: 1)
         }
     }
 
