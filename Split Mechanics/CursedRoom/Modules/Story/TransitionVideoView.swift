@@ -26,7 +26,9 @@ private struct _TransitionVideoRepresentable: UIViewRepresentable {
 private final class _TransitionVideoUIView: UIView {
     private var player: AVPlayer?
     private var observer: NSObjectProtocol?
+    private var timeObserverToken: Any?
     private var onFinished: (() -> Void)?
+    private var isFinished = false
 
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
@@ -55,8 +57,23 @@ private final class _TransitionVideoUIView: UIView {
         playerLayer.player = player
         playerLayer.videoGravity = .resizeAspectFill
 
+        setupBoundaryTimeObserver(for: player)
         setupNotification(for: playerItem)
         player.play()
+    }
+
+    private func triggerFinish() {
+        guard !isFinished else { return }
+        isFinished = true
+        player?.pause()
+        onFinished?()
+    }
+
+    private func setupBoundaryTimeObserver(for player: AVPlayer) {
+        let times = [NSValue(time: CMTime(seconds: 4.0, preferredTimescale: 600))]
+        timeObserverToken = player.addBoundaryTimeObserver(forTimes: times, queue: .main) { [weak self] in
+            self?.triggerFinish()
+        }
     }
 
     private func setupNotification(for item: AVPlayerItem) {
@@ -65,7 +82,7 @@ private final class _TransitionVideoUIView: UIView {
             object: item,
             queue: .main
         ) { [weak self] _ in
-            self?.onFinished?()
+            self?.triggerFinish()
         }
     }
 
@@ -79,6 +96,9 @@ private final class _TransitionVideoUIView: UIView {
     deinit {
         if let observer = observer {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let token = timeObserverToken {
+            player?.removeTimeObserver(token)
         }
         player?.pause()
         player = nil

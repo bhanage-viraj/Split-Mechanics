@@ -153,7 +153,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = JCNQ7PD5N2;
+				DEVELOPMENT_TEAM = 3QZ988B59R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Split Mechanics/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is required to scan your room with LiDAR for the AR experience.";
@@ -168,7 +168,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.bhanageviraj.Split-Mechanics";
+				PRODUCT_BUNDLE_IDENTIFIER = com.prishagupta.SplitMechanics;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -187,7 +187,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = JCNQ7PD5N2;
+				DEVELOPMENT_TEAM = 3QZ988B59R;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Split Mechanics/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Camera access is required to scan your room with LiDAR for the AR experience.";
@@ -202,7 +202,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.bhanageviraj.Split-Mechanics";
+				PRODUCT_BUNDLE_IDENTIFIER = com.prishagupta.SplitMechanics;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
