@@ -10,11 +10,12 @@ import Combine
 
 /// Root coordinator that owns the navigation state machine for all game phases.
 ///
-/// Currently drives: Lobby → Scanning (Host) / Waiting (Guest) → Game
+/// Currently drives: Intro/Main Menu → Lobby → Scanning (Host) / Waiting (Guest) → Game
 @MainActor
 final class AppCoordinator: ObservableObject {
     // MARK: - Published Navigation State
     enum Screen: Equatable {
+        case intro
         case lobby
         case scanning     // Phase 3 — Host scans with RoomPlan, Guest waits
         case seance       // Phase 4 — shared AR, worlds merge, doll appears
@@ -22,7 +23,8 @@ final class AppCoordinator: ObservableObject {
         case gameplay     // Phase 6 — role assignment & investigation
     }
 
-    @Published var currentScreen: Screen = .lobby
+    @Published var currentScreen: Screen = .intro
+    @Published private var hasPlayedIntro = false
 
     // MARK: - Shared Services
     private let networkService: NetworkService
@@ -75,24 +77,15 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - Lobby Navigation
 
-    /// Drives navigation directly from the shared `NetworkService` state so the
-    /// Lobby's own VIPER stack doesn't need to be re-wired into the coordinator.
-    /// - Becoming `.connected` from the lobby advances the Host to Scanning.
-    /// - Any disconnect returns to the lobby from wherever we are.
+    /// Keeps later game phases from hanging around after a disconnect. Connection
+    /// itself stays in the lobby so the connected-ready screen can be shown first.
     private func bindLobbyNavigation() {
         networkService.$state
-            .map { $0 == .connected }
+            .map { $0 == .disconnected }
             .removeDuplicates()
-            .sink { [weak self] isConnected in
+            .sink { [weak self] isDisconnected in
                 guard let self else { return }
-                if isConnected {
-                    if self.currentScreen == .lobby {
-                        if self.networkService.role == .host {
-                            self.startHostScanning()
-                        }
-                        self.transition(to: .scanning)
-                    }
-                } else {
+                if isDisconnected, self.currentScreen != .intro, self.hasPlayedIntro {
                     self.releaseScanningStack()
                     self.transition(to: .lobby)
                 }
@@ -147,6 +140,17 @@ final class AppCoordinator: ObservableObject {
                 self.transition(to: .seance)
             }
             .store(in: &cancellables)
+
+        // Guest receives the "start investigation" cue from the Host after the
+        // connected lobby screen. Host calls `startInvestigationFromLobby()`
+        // locally from the Continue button.
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.startScanning.rawValue }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.transition(to: .scanning)
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Seance → Gameplay (doll touched by either player)
@@ -168,8 +172,26 @@ final class AppCoordinator: ObservableObject {
     @ViewBuilder
     func makeScreen() -> some View {
         switch currentScreen {
+        case .intro:
+            IntroView(
+                playIntroAnimation: !hasPlayedIntro,
+                onStartInvestigation: { [self] in
+                    hasPlayedIntro = true
+                    transition(to: .lobby)
+                }
+            )
         case .lobby:
-            LobbyView(networkService: networkService)
+            LobbyView(
+                networkService: networkService,
+                onBackToMenu: { [self] in
+                    networkService.disconnect()
+                    hasPlayedIntro = true
+                    transition(to: .intro)
+                },
+                onStartInvestigation: { [self] in
+                    startInvestigationFromLobby()
+                }
+            )
         case .scanning:
             // Only the Host scans the room with RoomPlan. The Guest waits.
             if let scanningPresenter, networkService.role == .host {
@@ -190,6 +212,13 @@ final class AppCoordinator: ObservableObject {
     }
 
     // MARK: - Transitions
+
+    private func startInvestigationFromLobby() {
+        if networkService.role == .host {
+            startHostScanning()
+        }
+        transition(to: .scanning)
+    }
 
     private func transition(to screen: Screen) {
         withAnimation(.easeInOut(duration: 0.4)) {

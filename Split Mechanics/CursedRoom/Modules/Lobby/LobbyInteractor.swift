@@ -2,37 +2,34 @@ import Combine
 import Foundation
 import Network
 
-/// Interactor: owns the `NetworkService` and drives all business logic.
-///
-/// The Presenter calls into this interactor — the Interactor never touches UI.
 @MainActor
 final class LobbyInteractor {
 
-    // MARK: - Dependencies
 
     private let networkService: NetworkService
 
-    // MARK: - Output Subjects
 
     private let stateSubject = PassthroughSubject<NetworkState, Never>()
     private let statusSubject = PassthroughSubject<String, Never>()
     private let peerListSubject = PassthroughSubject<[NWBrowser.Result], Never>()
+    private let peerNameSubject = PassthroughSubject<String, Never>()
     private let messageSubject = PassthroughSubject<NetworkEvent, Never>()
     private let latencySubject = PassthroughSubject<LatencyStats, Never>()
     private let peerDisconnectSubject = PassthroughSubject<Bool, Never>()
 
-    // MARK: - Cancellables
 
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: - Init
 
     init(networkService: NetworkService) {
         self.networkService = networkService
         bindNetworkService()
     }
 
-    // MARK: - Binding
+    var isHost: Bool {
+        networkService.role == .host
+    }
+
 
     private func bindNetworkService() {
         networkService.$state
@@ -50,6 +47,12 @@ final class LobbyInteractor {
         networkService.$discoveredPeers
             .sink { [weak self] peers in
                 self?.peerListSubject.send(peers)
+            }
+            .store(in: &cancellables)
+
+        networkService.$connectedPeerName
+            .sink { [weak self] name in
+                self?.peerNameSubject.send(name)
             }
             .store(in: &cancellables)
 
@@ -74,7 +77,6 @@ final class LobbyInteractor {
             .store(in: &cancellables)
     }
 
-    // MARK: - Intents from Presenter
 
     func hostGame() {
         networkService.disconnect()
@@ -94,7 +96,10 @@ final class LobbyInteractor {
         networkService.send(.hello())
     }
 
-    // MARK: - Latency Testing Intents
+    func sendStartScanning() {
+        networkService.send(.startScanning())
+    }
+
 
     func pingOnce() {
         networkService.sendPing()
@@ -121,7 +126,6 @@ final class LobbyInteractor {
     }
 }
 
-// MARK: - Output Publishers (for Presenter subscription)
 
 extension LobbyInteractor {
     var statePublisher: AnyPublisher<NetworkState, Never> {
@@ -134,6 +138,10 @@ extension LobbyInteractor {
 
     var peerListPublisher: AnyPublisher<[NWBrowser.Result], Never> {
         peerListSubject.eraseToAnyPublisher()
+    }
+
+    var peerNamePublisher: AnyPublisher<String, Never> {
+        peerNameSubject.eraseToAnyPublisher()
     }
 
     var messagePublisher: AnyPublisher<NetworkEvent, Never> {

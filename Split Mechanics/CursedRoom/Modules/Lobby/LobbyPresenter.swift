@@ -2,12 +2,11 @@ import Combine
 import Foundation
 import Network
 import SwiftUI
+import UIKit
 
-/// Presenter: transforms interactor output into View state and passes user intents to the Interactor.
 @MainActor
 final class LobbyPresenter: ObservableObject {
 
-    // MARK: - Published View State
 
     @Published var networkState: NetworkState = .disconnected
     @Published var statusMessage: String = ""
@@ -16,20 +15,28 @@ final class LobbyPresenter: ObservableObject {
     @Published var receivedMessages: [NetworkEvent] = []
     @Published var latency: LatencyStats = .empty
     @Published var showPeerDisconnectedAlert: Bool = false
+    @Published var peerName: String = ""
+    @Published var selectedPeer: NWBrowser.Result?
+    @Published var didRequestInvestigationStart: Bool = false
 
-    // MARK: - Private
+
+    @Published private(set) var playerName: String = UIDevice.current.name
+
+    var isHost: Bool {
+        networkState == .hosting || (networkState == .connected && interactor.isHost)
+    }
+
 
     private let interactor: LobbyInteractor
     private var cancellables = Set<AnyCancellable>()
 
-    // MARK: - Init
+
 
     init(interactor: LobbyInteractor) {
         self.interactor = interactor
         bindInteractor()
     }
 
-    // MARK: - Binding
 
     private func bindInteractor() {
         interactor.statePublisher
@@ -51,6 +58,16 @@ final class LobbyPresenter: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] peers in
                 self?.discoveredPeers = peers
+            }
+            .store(in: &cancellables)
+
+        interactor.peerNamePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] name in
+                guard let self else { return }
+                if !name.isEmpty {
+                    self.peerName = name
+                }
             }
             .store(in: &cancellables)
 
@@ -78,7 +95,6 @@ final class LobbyPresenter: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - Formatted Latency
 
     var latencySummary: String {
         guard let last = latency.last else { return "No samples yet" }
@@ -95,18 +111,35 @@ final class LobbyPresenter: ObservableObject {
         return String(format: "avg %.1f · min %.1f · max %.1f ms (n=%d)", avg, min, max, latency.count)
     }
 
-    // MARK: - Intents from View
 
     func didTapHost() {
+        selectedPeer = nil
+        peerName = ""
         interactor.hostGame()
     }
 
     func didTapJoin() {
-        interactor.joinGame()
+        switch networkState {
+        case .disconnected:
+            selectedPeer = nil
+            interactor.joinGame()
+        case .browsing:
+            guard let selectedPeer else { return }
+            peerName = selectedPeer.displayName
+            interactor.connectToPeer(selectedPeer)
+        default:
+            break
+        }
     }
 
     func didTapPeer(_ result: NWBrowser.Result) {
-        interactor.connectToPeer(result)
+        selectedPeer = result
+        peerName = result.displayName
+    }
+
+    func didTapContinueConnected() {
+        didRequestInvestigationStart = true
+        interactor.sendStartScanning()
     }
 
     func didTapSendTest() {
@@ -135,6 +168,18 @@ final class LobbyPresenter: ObservableObject {
     }
 
     func didTapDisconnect() {
+        selectedPeer = nil
+        peerName = ""
+        didRequestInvestigationStart = false
         interactor.disconnect()
+    }
+}
+
+private extension NWBrowser.Result {
+    var displayName: String {
+        if case let .service(name, _, _, _) = endpoint {
+            return name
+        }
+        return "Friend_1"
     }
 }

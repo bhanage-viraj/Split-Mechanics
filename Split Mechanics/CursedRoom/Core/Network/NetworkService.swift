@@ -26,6 +26,7 @@ final class NetworkService: ObservableObject {
     @Published private(set) var role: NetworkRole = .none
     @Published private(set) var statusMessage: String = ""
     @Published private(set) var discoveredPeers: [NWBrowser.Result] = []
+    @Published private(set) var connectedPeerName: String = ""
     @Published private(set) var receivedMessages: [NetworkEvent] = []
     @Published private(set) var latency: LatencyStats = .empty
 
@@ -128,6 +129,7 @@ final class NetworkService: ObservableObject {
         browser?.cancel()
         browser = nil
         isConnecting = true
+        connectedPeerName = name
         self.role = .guest
 
         self.statusMessage = "Connecting to \(name)…"
@@ -188,6 +190,7 @@ final class NetworkService: ObservableObject {
         isConnecting = false
         latencySamples.removeAll()
         latency = .empty
+        connectedPeerName = ""
         role = .none
         state = .disconnected
         statusMessage = status
@@ -463,6 +466,7 @@ final class NetworkService: ObservableObject {
                     self.state = .connected
                     self.statusMessage = "Connected!"
                     self.beginReceiving(on: connection)
+                    self.send(.hello(UIDevice.current.name))
                 case .waiting(let error):
                     // The connection can't proceed yet (often Local Network
                     // permission, no route, or the host went away). It may retry
@@ -574,6 +578,13 @@ final class NetworkService: ObservableObject {
                 }
             case NetworkEvent.EventType.pong.rawValue:
                 handlePong(event)
+            case NetworkEvent.EventType.hello.rawValue:
+                if let payload = event.payload, !payload.isEmpty {
+                    connectedPeerName = payload
+                }
+                receivedMessages.append(event)
+                eventPublisher.send(event)
+                statusMessage = "Connected to \(connectedPeerName.isEmpty ? "peer" : connectedPeerName)."
             default:
                 receivedMessages.append(event)
                 eventPublisher.send(event)
