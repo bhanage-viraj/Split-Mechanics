@@ -60,10 +60,12 @@ struct GameplayView: View {
 
             if presenter.viewModel.isRoleResolved && !presenter.isLetterSpawned {
                 huntStatusBanner
+                    .allowsHitTesting(false)
             }
 
             if presenter.sealsCollected > 0 {
                 sealProgressBanner
+                    .allowsHitTesting(false)
             }
         }
     }

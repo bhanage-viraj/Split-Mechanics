@@ -21,12 +21,17 @@ enum SpatialAudioEmitter {
     }
 
     struct Handle {
-        let anchor: AnchorEntity
+        let anchor: AnchorEntity?
+        let attachedEmitter: Entity?
         let controller: AudioPlaybackController
 
         func stop(in scene: RealityKit.Scene) {
             controller.stop()
-            scene.removeAnchor(anchor)
+            if let anchor {
+                scene.removeAnchor(anchor)
+            } else {
+                attachedEmitter?.removeFromParent()
+            }
         }
     }
 
@@ -72,6 +77,32 @@ enum SpatialAudioEmitter {
             configuration: .init(shouldLoop: config.loops)
         )
         let controller = emitter.playAudio(resource)
-        return Handle(anchor: anchor, controller: controller)
+        return Handle(anchor: anchor, attachedEmitter: nil, controller: controller)
+    }
+
+    /// Attaches a spatial-audio emitter as a child of an existing anchor so audio
+    /// and visuals share the exact same world transform.
+    static func attach(
+        to parent: AnchorEntity,
+        audioURL: URL,
+        config: Config = Config()
+    ) async throws -> Handle {
+        let emitter = Entity()
+        emitter.name = config.entityName
+        emitter.position = .zero
+        parent.addChild(emitter)
+
+        emitter.components.set(SpatialAudioComponent(
+            gain: config.gain,
+            directivity: .beam(focus: 0),
+            distanceAttenuation: .rolloff(factor: Double(config.rolloffFactor))
+        ))
+
+        let resource = try await AudioFileResource(
+            contentsOf: audioURL,
+            configuration: .init(shouldLoop: config.loops)
+        )
+        let controller = emitter.playAudio(resource)
+        return Handle(anchor: nil, attachedEmitter: emitter, controller: controller)
     }
 }

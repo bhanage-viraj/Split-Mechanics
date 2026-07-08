@@ -117,6 +117,7 @@ final class ARService: NSObject, ObservableObject {
     private var footstepsAnchorEntity: AnchorEntity?
     private var whisperAudioHandle: SpatialAudioEmitter.Handle?
     private var hasSpawnedBloodTrail = false
+    private var hasConfiguredBloodPoolTap = false
 
     // MARK: - Phase 8A Private State
 
@@ -150,6 +151,7 @@ final class ARService: NSObject, ObservableObject {
 
     private static let bloodPoolAnchorName = "blood_pool_anchor"
     private static let bloodPoolEntityName = "blood_pool_entity"
+    private static let bloodPoolTapVolumeName = "blood_pool_tap_volume"
     private static let bloodPoolWithSealName = "blood_pool_with_seal"
     private static let footstepsAnchorName = "footsteps_anchor"
     private static let whisperEntityName = "whisper_audio_entity"
@@ -161,6 +163,8 @@ final class ARService: NSObject, ObservableObject {
     private static let footprintStepSpacing: Float = 0.42
     private static let footprintMaxLateralBend: Float = 0.30
     private static let footprintFloorOffset: Float = 0.006
+    private static let bloodPoolTapProximityMeters: Float = 2.2
+    private static let bloodPoolTapScreenRadius: CGFloat = 160
 
     // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
 
@@ -392,11 +396,11 @@ final class ARService: NSObject, ObservableObject {
         letterAnchorEntity = anchorEntity
         arView.scene.addAnchor(anchorEntity)
 
-        let position = transform.columns.3
+        let worldPosition = SpatialMath.worldPosition(from: transform)
         finishLetterSpawn(
             on: anchorEntity,
             for: role,
-            worldPosition: simd_float3(position.x, position.y, position.z)
+            worldPosition: worldPosition
         )
     }
 
@@ -432,42 +436,56 @@ final class ARService: NSObject, ObservableObject {
         )
 
         let walls = spawnableWalls()
-        if let wall = RandomnessMath.pickWall(from: walls, cameraPosition: camera) {
+        if let wall = RandomnessMath.pickWall(from: walls) {
             let lateralLimit = max(0.15, wall.planeExtent.width * 0.35)
             let lateralOffset = RandomnessMath.gaussianClamped(
                 stdDev: wall.planeExtent.width * 0.18,
                 limit: lateralLimit
             )
-            return SpatialMath.letterTransform(on: wall, floorY: floorY, lateralOffset: lateralOffset)
+            return SpatialMath.letterTransform(
+                on: wall,
+                floorY: floorY,
+                lateralOffset: lateralOffset
+            )
         }
 
-        if let raycastTransform = raycastWallTransform(floorY: floorY) {
-            return raycastTransform
-        }
-
-        return SpatialMath.letterTransformInFrontOfCamera(frame: frame, floorY: floorY)
+        return raycastWallTransform(floorY: floorY)
     }
 
-    /// Raycasts into vertical planes / scene geometry when tracked wall list is empty.
+    /// Raycasts into vertical planes / scene mesh when tracked wall list is empty.
     private func raycastWallTransform(floorY: Float) -> simd_float4x4? {
         guard arView.bounds.width > 0 else { return nil }
-        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
 
-        let targets: [(ARRaycastQuery.Target, ARRaycastQuery.TargetAlignment)] = [
+        var targets: [(ARRaycastQuery.Target, ARRaycastQuery.TargetAlignment)] = [
             (.existingPlaneGeometry, .vertical),
             (.estimatedPlane, .vertical),
-            (.existingPlaneGeometry, .any)
+            (.existingPlaneInfinite, .vertical)
+        ]
+        // LiDAR mesh hits use estimatedPlane + any alignment; filter to vertical below.
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
+            || ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+            targets.append((.estimatedPlane, .any))
+        }
+
+        let screenPoints = [
+            CGPoint(x: arView.bounds.midX, y: arView.bounds.midY),
+            CGPoint(x: arView.bounds.midX, y: arView.bounds.midY * 0.85),
+            CGPoint(x: arView.bounds.midX * 0.75, y: arView.bounds.midY),
+            CGPoint(x: arView.bounds.midX * 1.25, y: arView.bounds.midY)
         ]
 
-        for (target, alignment) in targets {
-            guard let query = arView.makeRaycastQuery(
-                from: center,
-                allowing: target,
-                alignment: alignment
-            ) else { continue }
+        for point in screenPoints {
+            for (target, alignment) in targets {
+                guard let query = arView.makeRaycastQuery(
+                    from: point,
+                    allowing: target,
+                    alignment: alignment
+                ) else { continue }
 
-            guard let hit = arView.session.raycast(query).first else { continue }
-            return SpatialMath.letterTransform(raycastTransform: hit.worldTransform, floorY: floorY)
+                guard let hit = arView.session.raycast(query).first else { continue }
+                guard SpatialMath.isVerticalWallHit(hit.worldTransform) else { continue }
+                return SpatialMath.letterTransform(raycastTransform: hit.worldTransform, floorY: floorY)
+            }
         }
         return nil
     }
@@ -497,10 +515,7 @@ final class ARService: NSObject, ObservableObject {
             $0.alignment == .vertical
                 && max($0.planeExtent.width, $0.planeExtent.height) >= Self.minimumWallExtent
         }
-        guard let wall = RandomnessMath.pickWall(
-            from: walls,
-            cameraPosition: SpatialMath.cameraPosition(from: frame)
-        ) else { return }
+        guard let wall = RandomnessMath.pickWall(from: walls) else { return }
 
         let floorY = SpatialMath.floorY(
             from: anchors.filter { $0.alignment == .horizontal },
@@ -511,7 +526,11 @@ final class ARService: NSObject, ObservableObject {
             stdDev: wall.planeExtent.width * 0.18,
             limit: lateralLimit
         )
-        let transform = SpatialMath.letterTransform(on: wall, floorY: floorY, lateralOffset: lateralOffset)
+        let transform = SpatialMath.letterTransform(
+            on: wall,
+            floorY: floorY,
+            lateralOffset: lateralOffset
+        )
         spawnLetterAtSyncedTransform(transform, for: role)
     }
 
@@ -529,7 +548,7 @@ final class ARService: NSObject, ObservableObject {
         isLetterSpawned = true
         letterWorldPosition = worldPosition
 
-        attachLetterContent(to: anchorEntity, for: role, worldPosition: worldPosition)
+        attachLetterContent(to: anchorEntity, for: role)
 
         statusMessage = role == .listener
             ? "Listen… something is calling from the walls."
@@ -539,8 +558,7 @@ final class ARService: NSObject, ObservableObject {
 
     private func attachLetterContent(
         to anchorEntity: AnchorEntity,
-        for role: PlayerRole,
-        worldPosition: simd_float3
+        for role: PlayerRole
     ) {
         switch role {
         case .seer:
@@ -550,14 +568,14 @@ final class ARService: NSObject, ObservableObject {
             configureLetterTap()
 
         case .listener:
-            // Pin audio to the exact letter world position — not the anchor rotation.
+            // Audio rides on the same anchor as the letter so both share one coordinate.
             Task { [weak self] in
                 guard let self, self.letterAudioHandle == nil else { return }
-                self.letterAudioHandle = await self.playSpatialClueAudio(
+                self.letterAudioHandle = await self.attachSpatialClueAudio(
+                    to: anchorEntity,
                     resourceName: Self.letterAudioName,
                     fileExtension: Self.letterAudioExtension,
                     subdirectory: Self.letterAudioSubdirectory,
-                    at: worldPosition,
                     config: .init(
                         gain: Audio.Decibel(-3),
                         rolloffFactor: 1.0,
@@ -643,8 +661,10 @@ final class ARService: NSObject, ObservableObject {
         footstepsAnchorEntity = spawnFootsteps(along: curvedPath, floorY: floorY)
 
         let poolAnchor = AnchorEntity(world: SpatialMath.translation(destination))
-        let poolEntity = makeBloodPoolEntity()
+        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.58)
+        let poolEntity = makeBloodPoolEntity(poolSize: poolSize)
         poolAnchor.addChild(poolEntity)
+        poolAnchor.addChild(makeBloodPoolTapVolume(poolSize: poolSize))
         arView.scene.addAnchor(poolAnchor)
         bloodPoolAnchorEntity = poolAnchor
         bloodPoolWorldPosition = destination
@@ -652,6 +672,7 @@ final class ARService: NSObject, ObservableObject {
         if localPlayerRole == .seer {
             footstepsAnchorEntity?.isEnabled = true
             bloodPoolAnchorEntity?.isEnabled = true
+            statusMessage = "Follow the trail — tap the blood pool at the end"
         } else {
             footstepsAnchorEntity?.isEnabled = false
             bloodPoolAnchorEntity?.isEnabled = false
@@ -789,8 +810,7 @@ final class ARService: NSObject, ObservableObject {
     }
 
     /// Creates the blood pool decal with collision and input targeting.
-    private func makeBloodPoolEntity() -> ModelEntity {
-        let poolSize = planeSize(for: Self.bloodPoolTextureName, baseWidth: 0.58)
+    private func makeBloodPoolEntity(poolSize: (width: Float, depth: Float)) -> ModelEntity {
         let mesh = MeshResource.generatePlane(width: poolSize.width, depth: poolSize.depth)
         let material = loadDecalMaterial(
             named: Self.bloodPoolTextureName,
@@ -803,23 +823,71 @@ final class ARService: NSObject, ObservableObject {
         return pool
     }
 
+    /// Invisible volume above the pool so taps are not swallowed by the LiDAR floor mesh.
+    private func makeBloodPoolTapVolume(poolSize: (width: Float, depth: Float)) -> ModelEntity {
+        let hitHeight: Float = 0.5
+        let size = simd_float3(poolSize.width * 1.4, hitHeight, poolSize.depth * 1.4)
+        let material = SimpleMaterial(
+            color: .init(red: 0, green: 0, blue: 0, alpha: 0.01),
+            isMetallic: false
+        )
+
+        let volume = ModelEntity(
+            mesh: .generateBox(size: size),
+            materials: [material]
+        )
+        volume.name = Self.bloodPoolTapVolumeName
+        volume.position.y = hitHeight * 0.5
+        volume.components.set(InputTargetComponent())
+        volume.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
+        return volume
+    }
+
     private func configureBloodPoolTap() {
+        guard !hasConfiguredBloodPoolTap else { return }
+        hasConfiguredBloodPoolTap = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleBloodPoolTap(_:)))
         arView.addGestureRecognizer(tap)
     }
 
     @objc private func handleBloodPoolTap(_ sender: UITapGestureRecognizer) {
         let location = sender.location(in: arView)
-        guard let tapped = arView.entity(at: location),
-              isBloodPool(tapped) else { return }
+        guard isBloodPoolTap(at: location) else { return }
         print("🩸 [AR] Blood pool tapped by Seer")
         bloodPoolTapped.send(())
+    }
+
+    private func isBloodPoolTap(at location: CGPoint) -> Bool {
+        if let tapped = arView.entity(at: location), isBloodPool(tapped) {
+            return true
+        }
+        return isBloodPoolProximityTap(at: location)
+    }
+
+    /// Fallback when the reconstructed floor mesh wins the hit test instead of the decal.
+    private func isBloodPoolProximityTap(at location: CGPoint) -> Bool {
+        guard let poolPosition = bloodPoolWorldPosition,
+              bloodPoolAnchorEntity?.isEnabled != false,
+              let frame = arView.session.currentFrame else { return false }
+
+        let cameraPosition = SpatialMath.cameraPosition(from: frame)
+        guard SpatialMath.distanceXZ(cameraPosition, poolPosition) <= Self.bloodPoolTapProximityMeters else {
+            return false
+        }
+
+        let aimPoint = simd_float3(poolPosition.x, poolPosition.y + 0.04, poolPosition.z)
+        guard let projected = arView.project(aimPoint) else { return false }
+
+        let dx = location.x - projected.x
+        let dy = location.y - projected.y
+        return (dx * dx + dy * dy).squareRoot() <= Self.bloodPoolTapScreenRadius
     }
 
     private func isBloodPool(_ entity: Entity) -> Bool {
         var current: Entity? = entity
         while let node = current {
-            if node.name == Self.bloodPoolEntityName { return true }
+            if node.name == Self.bloodPoolEntityName
+                || node.name == Self.bloodPoolTapVolumeName { return true }
             current = node.parent
         }
         return false
@@ -1181,19 +1249,24 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 8B — Frequency Scanner Emitter (Spatial Audio)
 
-    /// Host only: spawns an invisible spatial-audio emitter the Listener hunts by ear.
-    func spawnFrequencyEmitter() {
-        guard !hasSpawnedFrequencyEmitter else { return }
-        guard let floorY = resolvedFloorY() else { return }
+    /// Spawns an invisible spatial-audio emitter the Listener hunts by ear.
+    /// Host picks the position; Guest uses the synced coordinate from the network.
+    @discardableResult
+    func spawnFrequencyEmitter(at syncedPosition: simd_float3? = nil) -> simd_float3? {
+        guard !hasSpawnedFrequencyEmitter else { return frequencyEmitterWorldPosition }
+        guard let floorY = resolvedFloorY() else { return nil }
 
-        let origin: simd_float3
-        if let frame = arView.session.currentFrame {
-            origin = SpatialMath.cameraPosition(from: frame)
+        let position: simd_float3
+        if let syncedPosition {
+            position = SpatialMath.projectToFloor(syncedPosition, floorY: floorY)
+        } else if let slab = stoneSlabWorldPosition {
+            position = simd_float3(slab.x + 0.9, floorY + 0.1, slab.z + 0.4)
+        } else if let frame = arView.session.currentFrame {
+            let origin = SpatialMath.cameraPosition(from: frame)
+            position = randomFloorDestination(from: origin, distance: 1.8, floorY: floorY)
         } else {
-            return
+            return nil
         }
-
-        let position = randomFloorDestination(from: origin, distance: 1.8, floorY: floorY)
         let anchor = AnchorEntity(world: SpatialMath.translation(position))
         let entity = Entity()
         entity.name = Self.frequencyEmitterEntityName
@@ -1212,6 +1285,7 @@ final class ARService: NSObject, ObservableObject {
 
         Task { await self.startFrequencyTone(on: entity) }
         print("📡 [AR] Frequency emitter spawned at \(position)")
+        return position
     }
 
     var frequencyEmitterWorldPosition: simd_float3? {
@@ -1297,6 +1371,38 @@ final class ARService: NSObject, ObservableObject {
     }
 
     // MARK: - Spatial Audio
+
+    /// Pins looping spatial audio onto an existing letter anchor (shared coordinate).
+    private func attachSpatialClueAudio(
+        to anchorEntity: AnchorEntity,
+        resourceName: String,
+        fileExtension: String,
+        subdirectory: String?,
+        config: SpatialAudioEmitter.Config
+    ) async -> SpatialAudioEmitter.Handle? {
+        guard let url = SpatialAudioEmitter.bundleURL(
+            named: resourceName,
+            extension: fileExtension,
+            subdirectory: subdirectory
+        ) else {
+            print("🔊 [AR] Audio not found: \(resourceName).\(fileExtension)")
+            return nil
+        }
+
+        do {
+            let handle = try await SpatialAudioEmitter.attach(
+                to: anchorEntity,
+                audioURL: url,
+                config: config
+            )
+            let position = SpatialMath.worldPosition(from: anchorEntity.transformMatrix(relativeTo: nil))
+            print("🔊 [AR] Spatial audio attached to letter at \(position)")
+            return handle
+        } catch {
+            print("🔊 [AR] Failed to attach spatial audio: \(error.localizedDescription)")
+            return nil
+        }
+    }
 
     /// Starts looping spatial audio at an exact world coordinate.
     private func playSpatialClueAudio(

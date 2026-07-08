@@ -45,6 +45,7 @@ struct NetworkEvent: Codable, Sendable {
         case frequencyMatched = "frequency_matched"
         case seal2Collected = "seal_2_collected"
         case coinTrailSpawn = "coin_trail_spawn"
+        case frequencyEmitterSpawn = "frequency_emitter_spawn"
     }
 
     let eventType: String
@@ -121,6 +122,12 @@ struct NetworkEvent: Codable, Sendable {
     static func coinTrailSpawn(slabPosition: simd_float3) -> NetworkEvent {
         let payload = "\(slabPosition.x),\(slabPosition.y),\(slabPosition.z)"
         return NetworkEvent(eventType: EventType.coinTrailSpawn.rawValue, payload: payload)
+    }
+
+    /// Host → Guest: world position of the frequency emitter (Phase 8B).
+    static func frequencyEmitterSpawn(position: simd_float3) -> NetworkEvent {
+        let payload = "\(position.x),\(position.y),\(position.z)"
+        return NetworkEvent(eventType: EventType.frequencyEmitterSpawn.rawValue, payload: payload)
     }
 
     /// A latency probe. Payload encodes `"<sequence>|<sendTimeInterval>"` so the

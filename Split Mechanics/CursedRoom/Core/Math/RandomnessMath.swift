@@ -69,23 +69,8 @@ enum RandomnessMath {
         return elements.last
     }
 
-    /// Gaussian-weighted wall pick. Walls near `idealDistance` metres from the
-    /// camera score highest — not always the nearest, not the furthest. Larger
-    /// walls (multi-room scans) get a slight area bonus so every room is viable.
-    static func pickWall(
-        from walls: [ARPlaneAnchor],
-        cameraPosition: simd_float3,
-        idealDistance: Float = 1.5,
-        sigma: Float = 0.6
-    ) -> ARPlaneAnchor? {
-        guard !walls.isEmpty else { return nil }
-        let weights = walls.map { wall -> Float in
-            let center = SpatialMath.worldCenter(of: wall)
-            let distance = SpatialMath.distanceXZ(cameraPosition, center)
-            let gaussian = exp(-0.5 * pow((distance - idealDistance) / sigma, 2))
-            let area = max(0.25, wall.planeExtent.width * wall.planeExtent.height)
-            return gaussian * area
-        }
-        return weightedRandomElement(walls, weights: weights)
+    /// Picks a random vertical wall. Every spawnable wall has equal odds.
+    static func pickWall(from walls: [ARPlaneAnchor]) -> ARPlaneAnchor? {
+        walls.randomElement()
     }
 }

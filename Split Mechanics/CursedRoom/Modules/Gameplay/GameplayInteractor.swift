@@ -44,6 +44,7 @@ final class GameplayInteractor: ObservableObject {
     private let targetFrequency: Double = 440.0
     @Published private(set) var showFrequencyNote = false
     private var didSpawnFrequencyPhase = false
+    private var didBeginFrequencyScanner = false
     private var isFrequencyPhaseActive = false
 
     // Phase 8B — Frequency Scanner (Listener)
@@ -88,6 +89,7 @@ final class GameplayInteractor: ObservableObject {
         bindFrequencyMatched()
         bindSeal2Tap()
         bindCoinTrailNetworkSync()
+        bindFrequencyEmitterSync()
         bindFrequencyScanner()
         assignRolesIfNeeded()
         if playerRole != .unassigned {
@@ -280,7 +282,10 @@ final class GameplayInteractor: ObservableObject {
     }
 
     private func handleBloodPoolTapped() {
-        guard playerRole == .seer else { return }
+        guard playerRole == .seer else {
+            print("🔢 [Gameplay] Blood pool tap ignored — only the Seer can interact")
+            return
+        }
         guard !isBloodTrailPhaseActive else { return }
         isBloodTrailPhaseActive = true
         showCodeKeypad = true
@@ -329,6 +334,7 @@ final class GameplayInteractor: ObservableObject {
                 self.sealsCollected = max(self.sealsCollected, count)
                 print("✨ [Gameplay] Received seal update — total: \(self.sealsCollected)")
                 if count >= 1 {
+                    self.revealFirstSealIfNeeded()
                     self.beginFrequencyPhaseIfNeeded()
                 }
             }
@@ -342,15 +348,13 @@ final class GameplayInteractor: ObservableObject {
                 print("✨ [Gameplay] Received seal 2 collected — total: \(self.sealsCollected)")
             }
             .store(in: &cancellables)
+    }
 
-        // Sync local seal state back to AR so both devices show the seal.
-        $sealsCollected
-            .removeDuplicates()
-            .filter { $0 > 0 }
-            .sink { [weak self] count in
-                guard let self, count > 0, self.arService.isFirstSealRevealed else { return }
-            }
-            .store(in: &cancellables)
+    /// Keeps the first seal visible on the remote device after the blood pool puzzle.
+    private func revealFirstSealIfNeeded() {
+        guard !arService.isFirstSealRevealed,
+              let position = arService.bloodPoolWorldPosition else { return }
+        arService.revealFirstSeal(at: position)
     }
 
     // MARK: - Phase 7B — Listener Whisper Proximity Hints
@@ -515,6 +519,7 @@ final class GameplayInteractor: ObservableObject {
         guard playerRole == .seer else { return }
 
         showFrequencyNote = false
+        arService.playStoneButtonPress()
         arService.removeBarrier()
         arService.revealSecondSeal()
         arService.removeFrequencyEmitter()
@@ -543,11 +548,17 @@ final class GameplayInteractor: ObservableObject {
 
     /// Spawns the gold-coin trail once the first seal is collected.
     private func beginFrequencyPhaseIfNeeded() {
+        guard sealsCollected > 0 else { return }
+        spawnFrequencyContentIfNeeded()
+        beginFrequencyScannerPhase()
+    }
+
+    private func spawnFrequencyContentIfNeeded() {
         guard !didSpawnFrequencyPhase else { return }
-        didSpawnFrequencyPhase = true
 
         if networkService.role == .host {
             arService.spawnFrequencyPhase()
+            didSpawnFrequencyPhase = true
             if let position = arService.stoneSlabWorldPosition {
                 networkService.send(.coinTrailSpawn(slabPosition: position))
             }
@@ -555,11 +566,13 @@ final class GameplayInteractor: ObservableObject {
         } else if let event = networkService.latestEvent(ofType: .coinTrailSpawn),
                   let position = decodePosition(event.payload) {
             arService.spawnFrequencyPhase(at: position)
+            didSpawnFrequencyPhase = true
             print("🪙 [Gameplay] Guest spawned frequency phase from synced position")
         }
 
-        print("🪙 [Gameplay] Phase 8A frequency phase started")
-        beginFrequencyScannerPhase()
+        if didSpawnFrequencyPhase {
+            print("🪙 [Gameplay] Phase 8A frequency phase started")
+        }
     }
 
     // MARK: - Phase 8B — Frequency Scanner (Listener branch)
@@ -574,16 +587,27 @@ final class GameplayInteractor: ObservableObject {
     }
 
     private func beginFrequencyScannerPhase() {
-        guard !didFireFrequencyMatch else { return }
+        guard sealsCollected > 0 else { return }
+        guard !didBeginFrequencyScanner else { return }
+        didBeginFrequencyScanner = true
 
         if playerRole == .listener {
             startFrequencyLoopIfNeeded()
         }
 
-        if networkService.role == .host {
-            arService.spawnFrequencyEmitter()
-        }
+        spawnFrequencyEmitterIfNeeded()
         print("📡 [Gameplay] Phase 8B frequency scanner started")
+    }
+
+    private func spawnFrequencyEmitterIfNeeded() {
+        if networkService.role == .host {
+            if let position = arService.spawnFrequencyEmitter() {
+                networkService.send(.frequencyEmitterSpawn(position: position))
+            }
+        } else if let event = networkService.latestEvent(ofType: .frequencyEmitterSpawn),
+                  let position = decodePosition(event.payload) {
+            arService.spawnFrequencyEmitter(at: position)
+        }
     }
 
     private func bindFrequencyScanner() {
@@ -636,6 +660,7 @@ final class GameplayInteractor: ObservableObject {
             sliderValue = (targetFrequency - frequencyMin) / (frequencyMax - frequencyMin)
 
             arService.playStoneButtonPress()
+            arService.removeFrequencyEmitter()
             networkService.send(.frequencyMatched())
             stopFrequencyLoop()
             print("📡 [Gameplay] Frequency matched — stone button pressed")
@@ -647,11 +672,24 @@ final class GameplayInteractor: ObservableObject {
             .filter { $0.eventType == NetworkEvent.EventType.coinTrailSpawn.rawValue }
             .sink { [weak self] event in
                 guard let self, self.networkService.role == .guest else { return }
-                guard !self.arService.isFrequencyPhaseSpawned,
+                guard !self.didSpawnFrequencyPhase,
                       let position = self.decodePosition(event.payload) else { return }
                 self.arService.spawnFrequencyPhase(at: position)
                 self.didSpawnFrequencyPhase = true
+                self.beginFrequencyScannerPhase()
                 print("🪙 [Gameplay] Guest received coin trail spawn from Host")
+            }
+            .store(in: &cancellables)
+    }
+
+    private func bindFrequencyEmitterSync() {
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.frequencyEmitterSpawn.rawValue }
+            .sink { [weak self] event in
+                guard let self, self.networkService.role == .guest else { return }
+                guard let position = self.decodePosition(event.payload) else { return }
+                self.arService.spawnFrequencyEmitter(at: position)
+                print("📡 [Gameplay] Guest spawned synced frequency emitter")
             }
             .store(in: &cancellables)
     }

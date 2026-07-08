@@ -28,6 +28,7 @@ struct SeerView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: presenter.showFrequencyNote)
+        .allowsHitTesting(showRolePopup || presenter.showFrequencyNote)
     }
 }
 
