@@ -63,11 +63,17 @@ enum SpatialMath {
         floors.map { worldCenter(of: $0).y }.min() ?? fallback
     }
 
+    /// Translation column of a 4×4 world transform.
+    static func worldPosition(from transform: simd_float4x4) -> simd_float3 {
+        simd_float3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+    }
+
     /// Builds a world transform for a letter flush on a wall at eye level.
+    /// `lateralOffset` slides along the wall surface from its tracked centre.
     static func letterTransform(
         on wall: ARPlaneAnchor,
         floorY: Float,
-        lateralOffset: Float
+        lateralOffset: Float = 0
     ) -> simd_float4x4 {
         let center = worldCenter(of: wall)
         let right = wallRight(of: wall)
@@ -79,6 +85,12 @@ enum SpatialMath {
         position -= normal * 0.015
 
         return orientedTransform(position: position, forward: -normal)
+    }
+
+    /// True when a raycast hit is on a roughly vertical surface (wall, not floor/ceiling).
+    static func isVerticalWallHit(_ transform: simd_float4x4) -> Bool {
+        let normalY = abs(transform.columns.2.y)
+        return normalY < 0.35
     }
 
     /// Builds a letter transform from a raycast hit on any vertical surface.
@@ -102,20 +114,6 @@ enum SpatialMath {
         position.y = floorY + letterHeightAboveFloor
         position -= normal * 0.02
         return orientedTransform(position: position, forward: -normal)
-    }
-
-    /// Places a letter ~2.5 m in front of the camera when no wall planes exist yet.
-    static func letterTransformInFrontOfCamera(frame: ARFrame, floorY: Float) -> simd_float4x4 {
-        let camera = frame.camera.transform
-        let camPos = cameraPosition(from: frame)
-        let forward = -simd_normalize(simd_float3(
-            camera.columns.2.x,
-            camera.columns.2.y,
-            camera.columns.2.z
-        ))
-        var position = camPos + forward * 1.5
-        position.y = floorY + letterHeightAboveFloor
-        return orientedTransform(position: position, forward: forward)
     }
 
     /// Builds a rotation matrix with `forward` as local +Z.

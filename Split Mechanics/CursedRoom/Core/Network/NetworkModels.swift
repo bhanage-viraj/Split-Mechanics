@@ -42,8 +42,11 @@ struct NetworkEvent: Codable, Sendable {
         case bloodTrailSpawn = "blood_trail_spawn"
         case clueCode = "clue_code"
         case requestBloodTrail = "request_blood_trail"
-        case bloodTrailSpawn = "blood_trail_spawn"
         case sealCollected = "seal_collected"
+        case frequencyMatched = "frequency_matched"
+        case seal2Collected = "seal_2_collected"
+        case coinTrailSpawn = "coin_trail_spawn"
+        case frequencyEmitterSpawn = "frequency_emitter_spawn"
     }
 
     let eventType: String
@@ -91,15 +94,15 @@ struct NetworkEvent: Codable, Sendable {
         NetworkEvent(eventType: EventType.letterCollected.rawValue, payload: nil)
     }
 
-    /// Host → Guest: synced blood trail endpoints for Phase 7A.
-    static func bloodTrailSpawn(roomCenter: simd_float3, destination: simd_float3) -> NetworkEvent {
-        let payload = BloodTrailSpawnPayload.encode(roomCenter: roomCenter, destination: destination)
+    /// Host → Guest: synced blood trail destination and curve direction (Phase 7A).
+    static func bloodTrailSpawn(destination: simd_float3, bendSide: Float) -> NetworkEvent {
+        let payload = BloodTrailSpawnPayload.encode(destination: destination, bendSide: bendSide)
         return NetworkEvent(eventType: EventType.bloodTrailSpawn.rawValue, payload: payload)
     }
 
     /// Host → Guest: 3-digit clue code for the blood pool puzzle (Phase 7A).
     static func clueCode(code: String) -> NetworkEvent {
-        return NetworkEvent(eventType: EventType.clueCode.rawValue, payload: code)
+        NetworkEvent(eventType: EventType.clueCode.rawValue, payload: code)
     }
 
     /// Guest Seer → Host: asks the authoritative device to place the blood trail.
@@ -107,15 +110,31 @@ struct NetworkEvent: Codable, Sendable {
         NetworkEvent(eventType: EventType.requestBloodTrail.rawValue, payload: nil)
     }
 
-    /// Host → both: synced blood pool destination and curve direction (Phase 7A).
-    static func bloodTrailSpawn(destination: simd_float3, bendSide: Float) -> NetworkEvent {
-        let payload = BloodTrailSpawnPayload.encode(destination: destination, bendSide: bendSide)
-        return NetworkEvent(eventType: EventType.bloodTrailSpawn.rawValue, payload: payload)
-    }
-
     /// Either player → the other: first seal collected, update UI state (Phase 7C).
     static func sealCollected(sealNumber: Int) -> NetworkEvent {
         return NetworkEvent(eventType: EventType.sealCollected.rawValue, payload: "\(sealNumber)")
+    }
+
+    /// Listener → Seer: frequency scanner matched the target (Phase 8A).
+    static func frequencyMatched() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.frequencyMatched.rawValue, payload: nil)
+    }
+
+    /// Seer → Listener: second seal collected (Phase 8A).
+    static func seal2Collected() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.seal2Collected.rawValue, payload: nil)
+    }
+
+    /// Host → Guest: slab destination for the gold-coin trail (Phase 8A).
+    static func coinTrailSpawn(slabPosition: simd_float3) -> NetworkEvent {
+        let payload = "\(slabPosition.x),\(slabPosition.y),\(slabPosition.z)"
+        return NetworkEvent(eventType: EventType.coinTrailSpawn.rawValue, payload: payload)
+    }
+
+    /// Host → Guest: world position of the frequency emitter (Phase 8B).
+    static func frequencyEmitterSpawn(position: simd_float3) -> NetworkEvent {
+        let payload = "\(position.x),\(position.y),\(position.z)"
+        return NetworkEvent(eventType: EventType.frequencyEmitterSpawn.rawValue, payload: payload)
     }
 
     /// A latency probe. Payload encodes `"<sequence>|<sendTimeInterval>"` so the
@@ -144,22 +163,17 @@ struct LatencyStats: Equatable, Sendable {
     )
 }
 
-/// Encodes room center + destination for the Host → Guest blood trail sync.
+/// Encodes the synced blood pool destination and curve bend for Phase 7A.
 enum BloodTrailSpawnPayload {
-    static func encode(roomCenter: simd_float3, destination: simd_float3) -> String {
-        [roomCenter, destination]
-            .flatMap { [String($0.x), String($0.y), String($0.z)] }
-            .joined(separator: ",")
+    static func encode(destination: simd_float3, bendSide: Float) -> String {
+        "\(destination.x),\(destination.y),\(destination.z),\(bendSide)"
     }
 
-    static func decode(_ payload: String?) -> (roomCenter: simd_float3, destination: simd_float3)? {
+    static func decode(_ payload: String?) -> (destination: simd_float3, bendSide: Float)? {
         guard let payload else { return nil }
         let parts = payload.split(separator: ",").compactMap { Float($0) }
-        guard parts.count == 6 else { return nil }
-        return (
-            simd_float3(parts[0], parts[1], parts[2]),
-            simd_float3(parts[3], parts[4], parts[5])
-        )
+        guard parts.count == 4 else { return nil }
+        return (simd_float3(parts[0], parts[1], parts[2]), parts[3])
     }
 }
 
@@ -187,19 +201,5 @@ enum LetterSpawnPayload {
         matrix.columns.2 = simd_float4(parts[8], parts[9], parts[10], parts[11])
         matrix.columns.3 = simd_float4(parts[12], parts[13], parts[14], parts[15])
         return matrix
-    }
-}
-
-/// Encodes the synced blood pool destination and curve bend for Phase 7A.
-enum BloodTrailSpawnPayload {
-    static func encode(destination: simd_float3, bendSide: Float) -> String {
-        "\(destination.x),\(destination.y),\(destination.z),\(bendSide)"
-    }
-
-    static func decode(_ payload: String?) -> (destination: simd_float3, bendSide: Float)? {
-        guard let payload else { return nil }
-        let parts = payload.split(separator: ",").compactMap { Float($0) }
-        guard parts.count == 4 else { return nil }
-        return (simd_float3(parts[0], parts[1], parts[2]), parts[3])
     }
 }

@@ -51,19 +51,21 @@ struct GameplayView: View {
         } else {
             switch presenter.viewModel.playerRole {
             case .seer:
-                SeerView()
+                SeerView(presenter: presenter)
             case .listener:
-                ListenerView()
+                ListenerView(presenter: presenter)
             case .unassigned:
                 assigningOverlay
             }
 
             if presenter.viewModel.isRoleResolved && !presenter.isLetterSpawned {
                 huntStatusBanner
+                    .allowsHitTesting(false)
             }
 
             if presenter.sealsCollected > 0 {
                 sealProgressBanner
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -250,7 +252,7 @@ struct LetterSheetView: View {
                     .font(.largeTitle)
                     .fontWeight(.bold)
 
-                Text("Hello")
+                Text("Follow the trail…")
                     .font(.title)
                     .foregroundStyle(.primary)
 
