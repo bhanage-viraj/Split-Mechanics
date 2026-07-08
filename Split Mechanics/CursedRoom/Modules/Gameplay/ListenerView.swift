@@ -24,8 +24,8 @@ struct ListenerView: View {
 
             if showRolePopup {
                 RoleRevealPopup(
-                    roleTitle: "You are the Listener",
-                    roleDescription: "You can hear the hidden world, but your vision is fading.",
+                    roleTitle: String(localized: "You are the Listener"),
+                    roleDescription: String(localized: "You can hear the hidden world, but your vision is fading."),
                     onDismiss: { withAnimation(.easeOut(duration: 0.25)) { showRolePopup = false } }
                 )
             }

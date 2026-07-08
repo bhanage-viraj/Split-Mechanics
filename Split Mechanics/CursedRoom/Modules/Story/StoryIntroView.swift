@@ -206,11 +206,11 @@ struct StoryIntroView: View {
 
                 // 3 Column details
                 HStack(spacing: 0) {
-                    briefingColumn(icon: "magnifyingglass", title: "Look for\nthe clues")
+                    briefingColumn(icon: "magnifyingglass", title: String(localized: "Look for\nthe clues"))
                     Spacer()
-                    briefingColumn(icon: "person.2.fill", title: "Help your\npartner")
+                    briefingColumn(icon: "person.2.fill", title: String(localized: "Help your\npartner"))
                     Spacer()
-                    briefingColumn(icon: "lock.fill", title: "Solve\nthe mystery")
+                    briefingColumn(icon: "lock.fill", title: String(localized: "Solve\nthe mystery"))
                 }
                 .padding(.top, 8)
                 .padding(.horizontal, 8)

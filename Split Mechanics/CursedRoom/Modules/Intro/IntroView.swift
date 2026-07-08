@@ -5,6 +5,8 @@ struct IntroView: View {
     let playIntroAnimation: Bool
     let onStartInvestigation: () -> Void
 
+    @EnvironmentObject private var languageManager: LanguageManager
+
     // MARK: - Animation State
 
     /// Tracks which phase the intro is in.
@@ -84,7 +86,18 @@ struct IntroView: View {
                 }
                 .frame(width: proxy.size.width)
             }
+
+            VStack {
+                HStack {
+                    Spacer()
+                    languageToggleButton
+                }
+                Spacer()
+            }
+            .padding(.top, 54)
+            .padding(.trailing, 20)
         }
+        .id(languageManager.current.rawValue)
         .ignoresSafeArea()
         .onAppear {
             if playIntroAnimation {
@@ -93,6 +106,31 @@ struct IntroView: View {
                 showMenuImmediately()
             }
         }
+    }
+
+    // MARK: - Language Toggle
+
+    private var languageToggleButton: some View {
+        Button(action: languageManager.toggleLanguage) {
+            Text(languageManager.current == .english ? "ES" : "EN")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.ghostWhite.opacity(0.9))
+                .frame(width: 36, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.black.opacity(0.45))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.ghostGold.opacity(0.35), lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            languageManager.current == .english
+                ? String(localized: "Switch to Spanish")
+                : String(localized: "Switch to English")
+        )
     }
 
     // MARK: - Title Group
@@ -149,15 +187,15 @@ struct IntroView: View {
 
     private var requirementsPanel: some View {
         HStack(spacing: 0) {
-            requirementCard(icon: "person.2.fill", title: "2 PLAYERS", subtitle: "You depend on\neach other.")
+            requirementCard(icon: "person.2.fill", title: String(localized: "2 PLAYERS"), subtitle: String(localized: "You depend on\neach other."))
             
             verticalDivider
             
-            requirementCard(icon: "location.fill.viewfinder", title: "REAL WORLD", subtitle: "Move around to\nfind clues.")
+            requirementCard(icon: "location.fill.viewfinder", title: String(localized: "REAL WORLD"), subtitle: String(localized: "Move around to\nfind clues."))
             
             verticalDivider
             
-            requirementCard(icon: "headphones", title: "HEADPHONES", subtitle: "Every sound\nmatters.")
+            requirementCard(icon: "headphones", title: String(localized: "HEADPHONES"), subtitle: String(localized: "Every sound\nmatters."))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 24)
@@ -253,4 +291,5 @@ struct IntroView: View {
 
 #Preview {
     IntroView(onStartInvestigation: {})
+        .environmentObject(LanguageManager.shared)
 }

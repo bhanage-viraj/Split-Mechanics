@@ -104,7 +104,9 @@ struct ConnectedView: View {
                         .foregroundStyle(Color.ghostGold)
                         .opacity(messageOpacity)
 
-                    Text(isHost ? "The investigation can begin." : "Wait for \(hostName) to start the investigation.")
+                    Text(isHost
+                        ? String(localized: "The investigation can begin.")
+                        : String(localized: "Wait for \(hostName) to start the investigation."))
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(Color.ghostWhite.opacity(0.58))
                         .multilineTextAlignment(.center)

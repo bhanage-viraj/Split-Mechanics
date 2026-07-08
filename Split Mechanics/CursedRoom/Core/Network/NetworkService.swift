@@ -92,9 +92,9 @@ final class NetworkService: ObservableObject {
             self.listener = listener
             self.role = .host
             self.state = .hosting
-            self.statusMessage = "Hosting… Waiting for a guest."
+            self.statusMessage = String(localized: "Hosting… Waiting for a guest.")
         } catch {
-            self.statusMessage = "Failed to host: \(error.localizedDescription)"
+            self.statusMessage = String(localized: "Failed to host: \(error.localizedDescription)")
             self.state = .disconnected
         }
     }
@@ -115,13 +115,13 @@ final class NetworkService: ObservableObject {
 
         self.browser = browser
         self.state = .browsing
-        self.statusMessage = "Browsing for hosts…"
+        self.statusMessage = String(localized: "Browsing for hosts…")
     }
 
     func connect(to result: NWBrowser.Result) {
         log("connect(to:) called — current state: \(state.rawValue), endpoint: \(result.endpoint)")
         guard case let .service(name, type, domain, _) = result.endpoint else {
-            self.statusMessage = "Selected peer is not a service endpoint."
+            self.statusMessage = String(localized: "Selected peer is not a service endpoint.")
             log("connect() aborted — endpoint is not a Bonjour service")
             return
         }
@@ -132,7 +132,7 @@ final class NetworkService: ObservableObject {
         connectedPeerName = name
         self.role = .guest
 
-        self.statusMessage = "Connecting to \(name)…"
+        self.statusMessage = String(localized: "Connecting to \(name)…")
         log("Opening connection to service name='\(name)' type='\(type)' domain='\(domain)'")
 
         let endpoint = NWEndpoint.service(name: name, type: type, domain: domain, interface: nil)
@@ -150,7 +150,7 @@ final class NetworkService: ObservableObject {
     /// Local, user-initiated disconnect (e.g. the Disconnect button).
     func disconnect() {
         peerDisconnected = false
-        teardown(status: "Disconnected.")
+        teardown(status: String(localized: "Disconnected."))
     }
 
     /// Called when the connection drops or fails.
@@ -160,11 +160,11 @@ final class NetworkService: ObservableObject {
             // We had a live connection and it dropped — the peer left.
             log("connectionDidDrop while CONNECTED (\(reason)) → peer disconnected")
             peerDisconnected = true
-            teardown(status: "The other player disconnected.")
+            teardown(status: String(localized: "The other player disconnected."))
         } else if isConnecting {
             // The connection failed while we were still establishing it.
             log("connectionDidDrop while CONNECTING (\(reason)) → connect failed")
-            teardown(status: "Could not connect to host.")
+            teardown(status: String(localized: "Could not connect to host."))
         } else {
             log("connectionDidDrop ignored (state: \(state.rawValue), reason: \(reason))")
         }
@@ -207,7 +207,7 @@ final class NetworkService: ObservableObject {
     func send(_ event: NetworkEvent) {
         enqueue(event)
         if state == .connected {
-            statusMessage = "Sent: \(event.eventType)"
+            statusMessage = String(localized: "Sent: \(event.eventType)")
         }
     }
 
@@ -242,7 +242,7 @@ final class NetworkService: ObservableObject {
             let payload = try JSONEncoder().encode(event)
             enqueue(kind: FrameKind.event, payload: payload)
         } catch {
-            self.statusMessage = "Send failed: \(error.localizedDescription)"
+            self.statusMessage = String(localized: "Send failed: \(error.localizedDescription)")
         }
     }
 
@@ -250,7 +250,7 @@ final class NetworkService: ObservableObject {
     /// Frame layout: `[kind: 1 byte][length: 4 bytes big-endian][payload]`.
     private func enqueue(kind: UInt8, payload: Data) {
         guard let connection, connection.state == .ready else {
-            self.statusMessage = "Cannot send — not connected."
+            self.statusMessage = String(localized: "Cannot send — not connected.")
             return
         }
 
@@ -273,7 +273,7 @@ final class NetworkService: ObservableObject {
 
                 if let error {
                     self.pendingSends.removeAll()
-                    self.statusMessage = "Send failed: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Send failed: \(error.localizedDescription)")
                     return
                 }
 
@@ -291,7 +291,7 @@ final class NetworkService: ObservableObject {
     /// Sends a single ping. The peer echoes it back and we measure round-trip time.
     func sendPing() {
         guard state == .connected, connection?.state == .ready else {
-            statusMessage = "Cannot ping — not connected."
+            statusMessage = String(localized: "Cannot ping — not connected.")
             return
         }
         pingSequence += 1
@@ -301,7 +301,7 @@ final class NetworkService: ObservableObject {
     /// Repeatedly pings at a fixed interval to gather average/min/max latency.
     func startPingLoop(intervalMilliseconds: Double = 500) {
         guard state == .connected else {
-            statusMessage = "Cannot ping — not connected."
+            statusMessage = String(localized: "Cannot ping — not connected.")
             return
         }
         stopPingLoop()
@@ -347,7 +347,7 @@ final class NetworkService: ObservableObject {
         latency.max = latencySamples.max()
         latency.average = latencySamples.reduce(0, +) / Double(latencySamples.count)
 
-        statusMessage = String(format: "RTT: %.1f ms", milliseconds)
+        statusMessage = String(format: String(localized: "RTT: %.1f ms"), milliseconds)
     }
 
     // MARK: - Private Setup
@@ -367,16 +367,16 @@ final class NetworkService: ObservableObject {
                 self.log("listener state → \(newState)")
                 switch newState {
                 case .ready:
-                    self.statusMessage = "Host is ready. Waiting for a guest…"
+                    self.statusMessage = String(localized: "Host is ready. Waiting for a guest…")
                 case .waiting(let error):
                     self.log("listener WAITING: \(error) — \(self.diagnose(error))")
-                    self.statusMessage = "Host waiting: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Host waiting: \(error.localizedDescription)")
                 case .failed(let error):
                     self.log("listener FAILED: \(error) — \(self.diagnose(error))")
-                    self.statusMessage = "Listener failed: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Listener failed: \(error.localizedDescription)")
                     self.state = .disconnected
                 case .cancelled:
-                    self.statusMessage = "Hosting cancelled."
+                    self.statusMessage = String(localized: "Hosting cancelled.")
                     self.state = .disconnected
                 default:
                     break
@@ -401,7 +401,7 @@ final class NetworkService: ObservableObject {
                 self.setupConnectionCallbacks(newConnection)
                 newConnection.start(queue: DispatchQueue.main)
                 self.state = .connected
-                self.statusMessage = "Guest connected!"
+                self.statusMessage = String(localized: "Guest connected!")
 
                 self.listener?.cancel()
                 self.listener = nil
@@ -421,12 +421,12 @@ final class NetworkService: ObservableObject {
                 }
                 switch newState {
                 case .ready:
-                    self.statusMessage = "Looking for hosts…"
+                    self.statusMessage = String(localized: "Looking for hosts…")
                 case .failed(let error):
-                    self.statusMessage = "Browse failed: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Browse failed: \(error.localizedDescription)")
                     self.state = .disconnected
                 case .cancelled:
-                    self.statusMessage = "Browsing cancelled."
+                    self.statusMessage = String(localized: "Browsing cancelled.")
                     self.state = .disconnected
                 default:
                     break
@@ -440,9 +440,9 @@ final class NetworkService: ObservableObject {
                 guard self.browser === browser else { return }
                 self.discoveredPeers = Array(results)
                 if results.isEmpty {
-                    self.statusMessage = "No hosts found."
+                    self.statusMessage = String(localized: "No hosts found.")
                 } else {
-                    self.statusMessage = "Found \(results.count) host(s). Tap to connect."
+                    self.statusMessage = String(localized: "Found \(results.count) host(s). Tap to connect.")
                 }
             }
         }
@@ -464,7 +464,7 @@ final class NetworkService: ObservableObject {
                 case .ready:
                     self.isConnecting = false
                     self.state = .connected
-                    self.statusMessage = "Connected!"
+                    self.statusMessage = String(localized: "Connected!")
                     self.beginReceiving(on: connection)
                     self.send(.hello(UIDevice.current.name))
                 case .waiting(let error):
@@ -472,10 +472,10 @@ final class NetworkService: ObservableObject {
                     // permission, no route, or the host went away). It may retry
                     // on its own, so we surface it but don't tear down.
                     self.log("connection WAITING: \(error) — \(self.diagnose(error))")
-                    self.statusMessage = "Waiting: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Waiting: \(error.localizedDescription)")
                 case .failed(let error):
                     self.log("connection FAILED: \(error) — \(self.diagnose(error))")
-                    self.statusMessage = "Connection failed: \(error.localizedDescription)"
+                    self.statusMessage = String(localized: "Connection failed: \(error.localizedDescription)")
                     self.connectionDidDrop(reason: "failed: \(error)")
                 case .cancelled:
                     self.connectionDidDrop(reason: "cancelled")
@@ -566,7 +566,7 @@ final class NetworkService: ObservableObject {
 
             guard let event = try? JSONDecoder().decode(NetworkEvent.self, from: payload) else {
                 log("Dropped unreadable frame (\(length) bytes)")
-                statusMessage = "Received unreadable data."
+                statusMessage = String(localized: "Received unreadable data.")
                 continue
             }
 
@@ -584,11 +584,11 @@ final class NetworkService: ObservableObject {
                 }
                 receivedMessages.append(event)
                 eventPublisher.send(event)
-                statusMessage = "Connected to \(connectedPeerName.isEmpty ? "peer" : connectedPeerName)."
+                statusMessage = String(localized: "Connected to \(connectedPeerName.isEmpty ? "peer" : connectedPeerName).")
             default:
                 receivedMessages.append(event)
                 eventPublisher.send(event)
-                statusMessage = "Received: \(event.eventType)"
+                statusMessage = String(localized: "Received: \(event.eventType)")
             }
         }
     }

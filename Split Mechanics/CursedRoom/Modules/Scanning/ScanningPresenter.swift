@@ -34,11 +34,11 @@ struct ScanningViewModel: Equatable {
             doorCount: 0,
             windowCount: 0,
             objectCount: 0,
-            title: isSupported ? "Preparing Scanner…" : "Unsupported Device",
+            title: isSupported ? String(localized: "Preparing Scanner…") : String(localized: "Unsupported Device"),
             subtitle: isSupported
-                ? "Point your phone at the room to begin."
-                : "RoomPlan scanning requires a LiDAR-equipped iPhone Pro.",
-            primaryButtonTitle: "Finish Scanning",
+                ? String(localized: "Point your phone at the room to begin.")
+                : String(localized: "RoomPlan scanning requires a LiDAR-equipped iPhone Pro."),
+            primaryButtonTitle: String(localized: "Finish Scanning"),
             primaryButtonEnabled: false,
             errorMessage: nil
         )
@@ -127,29 +127,29 @@ final class ScanningPresenter: ObservableObject {
         let buttonEnabled: Bool
 
         if !isSupported {
-            title = "Unsupported Device"
-            subtitle = "RoomPlan scanning requires a LiDAR-equipped iPhone Pro."
-            buttonTitle = "Finish Scanning"
+            title = String(localized: "Unsupported Device")
+            subtitle = String(localized: "RoomPlan scanning requires a LiDAR-equipped iPhone Pro.")
+            buttonTitle = String(localized: "Finish Scanning")
             buttonEnabled = false
         } else if isScanning {
-            title = "Scanning Room"
-            subtitle = "Move slowly around the room to capture walls and furniture."
-            buttonTitle = "Finish Scanning"
+            title = String(localized: "Scanning Room")
+            subtitle = String(localized: "Move slowly around the room to capture walls and furniture.")
+            buttonTitle = String(localized: "Finish Scanning")
             buttonEnabled = true
         } else if isProcessing {
-            title = "Processing…"
-            subtitle = "Building your room layout."
-            buttonTitle = "Processing…"
+            title = String(localized: "Processing…")
+            subtitle = String(localized: "Building your room layout.")
+            buttonTitle = String(localized: "Processing…")
             buttonEnabled = false
         } else if canStartGame {
-            title = "Scan Complete"
-            subtitle = "Captured \(walls) walls · \(objects) objects. Ready to begin."
-            buttonTitle = "Start Game"
+            title = String(localized: "Scan Complete")
+            subtitle = String(localized: "Captured \(walls) walls · \(objects) objects. Ready to begin.")
+            buttonTitle = String(localized: "Start Game")
             buttonEnabled = true
         } else {
-            title = "Preparing Scanner…"
-            subtitle = "Point your phone at the room to begin."
-            buttonTitle = "Finish Scanning"
+            title = String(localized: "Preparing Scanner…")
+            subtitle = String(localized: "Point your phone at the room to begin.")
+            buttonTitle = String(localized: "Finish Scanning")
             buttonEnabled = false
         }
 

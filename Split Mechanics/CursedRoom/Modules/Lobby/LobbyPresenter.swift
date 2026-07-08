@@ -97,8 +97,8 @@ final class LobbyPresenter: ObservableObject {
 
 
     var latencySummary: String {
-        guard let last = latency.last else { return "No samples yet" }
-        return String(format: "Last: %.1f ms", last)
+        guard let last = latency.last else { return String(localized: "No samples yet") }
+        return String(format: String(localized: "Last: %.1f ms"), last)
     }
 
     var latencyDetail: String {
@@ -106,9 +106,9 @@ final class LobbyPresenter: ObservableObject {
               let avg = latency.average,
               let min = latency.min,
               let max = latency.max else {
-            return "avg — · min — · max —"
+            return String(localized: "avg — · min — · max —")
         }
-        return String(format: "avg %.1f · min %.1f · max %.1f ms (n=%d)", avg, min, max, latency.count)
+        return String(format: String(localized: "avg %.1f · min %.1f · max %.1f ms (n=%d)"), avg, min, max, latency.count)
     }
 
 

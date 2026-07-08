@@ -180,7 +180,7 @@ struct PlayerBadge: View {
 // MARK: - Section Label ("Lobby" red label at top)
 
 struct SectionLabel: View {
-    let text: String
+    let text: LocalizedStringKey
     var color: Color = .ghostRedBright
 
     var body: some View {

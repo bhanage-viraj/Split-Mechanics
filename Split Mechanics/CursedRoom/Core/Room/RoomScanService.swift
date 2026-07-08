@@ -43,7 +43,7 @@ final class RoomScanService: NSObject, ObservableObject {
 
     func startSession() {
         guard isSupported else {
-            errorMessage = "This device doesn't support RoomPlan scanning (LiDAR required)."
+            errorMessage = String(localized: "This device doesn't support RoomPlan scanning (LiDAR required).")
             return
         }
         errorMessage = nil

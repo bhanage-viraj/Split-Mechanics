@@ -347,20 +347,20 @@ struct WaitingForHostView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         BeforeYouBeginGuidelineRow(
                             iconName: "headphones",
-                            title: "Wear headphones",
-                            subtitle: "For the best immersive experience."
+                            title: String(localized: "Wear headphones"),
+                            subtitle: String(localized: "For the best immersive experience.")
                         )
 
                         BeforeYouBeginGuidelineRow(
                             iconName: "house.fill",
-                            title: "Play indoors",
-                            subtitle: "In a dark and quiet environment."
+                            title: String(localized: "Play indoors"),
+                            subtitle: String(localized: "In a dark and quiet environment.")
                         )
 
                         BeforeYouBeginGuidelineRow(
                             iconName: "doc.text",
-                            title: "Follow instructions",
-                            subtitle: "On-screen guidance will lead the way."
+                            title: String(localized: "Follow instructions"),
+                            subtitle: String(localized: "On-screen guidance will lead the way.")
                         )
                     }
                     .padding(.horizontal, 24)

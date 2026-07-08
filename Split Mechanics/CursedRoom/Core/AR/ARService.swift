@@ -35,7 +35,7 @@ final class ARService: NSObject, ObservableObject {
     @Published private(set) var letterWorldPosition: simd_float3?
 
     /// Human-readable tracking status for the on-screen prompt.
-    @Published private(set) var statusMessage = "Starting AR…"
+    @Published private(set) var statusMessage = String(localized: "Starting AR…")
 
     // MARK: - Outputs to the interactor (VIPER bridge)
 
@@ -231,7 +231,7 @@ final class ARService: NSObject, ObservableObject {
 
         UIApplication.shared.isIdleTimerDisabled = true
         // GameAudioSession.activatePlayback() already called in AppDelegate on launch.
-        statusMessage = "Look around to merge your worlds…"
+        statusMessage = String(localized: "Look around to merge your worlds…")
 
         // On the Host, RoomPlan just released the camera. Give iOS a beat to hand
         // the capture over to ARKit, otherwise the passthrough stays black.
@@ -278,7 +278,7 @@ final class ARService: NSObject, ObservableObject {
     private func attemptDollSpawn() {
         guard isHost, wantsDoll, !dollAnchorAdded else { return }
         guard let transform = floorSpawnTransform() ?? raycastFloorFallback() else {
-            statusMessage = "Finding the floor… point at the ground."
+            statusMessage = String(localized: "Finding the floor… point at the ground.")
             return
         }
         let anchor = ARAnchor(name: Self.dollAnchorName, transform: transform)
@@ -355,7 +355,7 @@ final class ARService: NSObject, ObservableObject {
 
         wantsDoll = false
         isDollSpawned = false
-        statusMessage = "The curse has taken hold…"
+        statusMessage = String(localized: "The curse has taken hold…")
         print("🕯️ [AR] Doll removed — curse activated")
     }
 
@@ -408,7 +408,7 @@ final class ARService: NSObject, ObservableObject {
         guard isHost, wantsLetter, !letterAnchorAdded else { return }
         guard localPlayerRole != .unassigned else { return }
         guard let transform = computeLetterTransform() else {
-            statusMessage = "Point your camera at a wall…"
+            statusMessage = String(localized: "Point your camera at a wall…")
             print("📜 [AR] Letter spawn waiting — no wall transform yet")
             return
         }
@@ -422,7 +422,7 @@ final class ARService: NSObject, ObservableObject {
         }
 
         letterSpawned.send(transform)
-        statusMessage = "A hidden clue has been placed…"
+        statusMessage = String(localized: "A hidden clue has been placed…")
         print("📜 [AR] Letter placed (\(spawnableWalls().count) wall candidates)")
     }
 
@@ -551,8 +551,8 @@ final class ARService: NSObject, ObservableObject {
         attachLetterContent(to: anchorEntity, for: role)
 
         statusMessage = role == .listener
-            ? "Listen… something is calling from the walls."
-            : "Follow your partner. A clue awaits on the wall."
+            ? String(localized: "Listen… something is calling from the walls.")
+            : String(localized: "Follow your partner. A clue awaits on the wall.")
         print("📜 [AR] Letter spawned for \(role.rawValue) at \(worldPosition)")
     }
 
@@ -672,7 +672,7 @@ final class ARService: NSObject, ObservableObject {
         if localPlayerRole == .seer {
             footstepsAnchorEntity?.isEnabled = true
             bloodPoolAnchorEntity?.isEnabled = true
-            statusMessage = "Follow the trail — tap the blood pool at the end"
+            statusMessage = String(localized: "Follow the trail — tap the blood pool at the end")
         } else {
             footstepsAnchorEntity?.isEnabled = false
             bloodPoolAnchorEntity?.isEnabled = false
@@ -885,7 +885,7 @@ final class ARService: NSObject, ObservableObject {
 
     private func isBloodPool(_ entity: Entity) -> Bool {
         var current: Entity? = entity
-        while let node = current {
+        while let node = current {  
             if node.name == Self.bloodPoolEntityName
                 || node.name == Self.bloodPoolTapVolumeName { return true }
             current = node.parent
@@ -1017,7 +1017,7 @@ final class ARService: NSObject, ObservableObject {
         hasSpawnedFrequencyPhase = true
         isFrequencyPhaseSpawned = true
         statusMessage = seerVisible
-            ? "A trail of gold glimmers across the floor…"
+            ? String(localized: "A trail of gold glimmers across the floor…")
             : statusMessage
         print("🪙 [AR] Frequency phase spawned — slab at \(destination)")
     }
@@ -1179,7 +1179,7 @@ final class ARService: NSObject, ObservableObject {
         arView.scene.addAnchor(sealAnchor)
         seal2AnchorEntity = sealAnchor
         isSecondSealRevealed = true
-        statusMessage = "The Second Seal has risen…"
+        statusMessage = String(localized: "The Second Seal has risen…")
         print("✨ [AR] Second Seal revealed")
     }
 
@@ -1588,12 +1588,12 @@ final class ARService: NSObject, ObservableObject {
         let anchorEntity = AnchorEntity(anchor: anchor)
         dollAnchorEntity = anchorEntity
         arView.scene.addAnchor(anchorEntity)
-        statusMessage = "Summoning the doll…"
+        statusMessage = String(localized: "Summoning the doll…")
 
         Task { @MainActor in
             let doll = await loadDoll()
             anchorEntity.addChild(doll)
-            statusMessage = "The doll has appeared. Tap it."
+            statusMessage = String(localized: "The doll has appeared. Tap it.")
             print("🕯️ [AR] Doll entity rendered")
         }
     }
@@ -1743,7 +1743,7 @@ extension ARService: ARSessionDelegate {
                 if anchor is ARParticipantAnchor {
                     if !self.hasMergedWorlds {
                         self.hasMergedWorlds = true
-                        self.statusMessage = "Worlds merged. Summoning the doll…"
+                        self.statusMessage = String(localized: "Worlds merged. Summoning the doll…")
                         print("🕯️ [AR] Participant anchor detected — worlds merged")
                     }
                 } else if anchor.name == Self.dollAnchorName {

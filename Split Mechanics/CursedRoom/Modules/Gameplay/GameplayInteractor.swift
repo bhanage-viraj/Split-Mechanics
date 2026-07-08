@@ -319,7 +319,7 @@ final class GameplayInteractor: ObservableObject {
             // Stop Listener proximity to letter.
             stopListenerProximityLoop()
         } else {
-            keypadErrorMessage = "Wrong code. Try again."
+            keypadErrorMessage = String(localized: "Wrong code. Try again.")
             print("🔒 [Gameplay] Wrong code: \(code)")
         }
     }
