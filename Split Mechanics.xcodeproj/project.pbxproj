@@ -6,7 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5D1F4B742FFF319500B1A210 /* skullicon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5D1F4B732FFF319500B1A210 /* skullicon.icon */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		5D1F4B732FFF319500B1A210 /* skullicon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = skullicon.icon; sourceTree = "<group>"; };
 		6CECCC202FF5259100D61F76 /* Split Mechanics.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Split Mechanics.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -53,6 +58,7 @@
 				6CECCC222FF5259100D61F76 /* Split Mechanics */,
 				6CECCC212FF5259100D61F76 /* Products */,
 				6CE40C692FF7594A00EDA1DE /* Master Promt */,
+				5D1F4B732FFF319500B1A210 /* skullicon.icon */,
 			);
 			sourceTree = "<group>";
 		};
@@ -130,6 +136,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5D1F4B742FFF319500B1A210 /* skullicon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -149,7 +156,7 @@
 		6CECCC372FF5259200D61F76 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = skullicon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -183,7 +190,7 @@
 		6CECCC382FF5259200D61F76 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = skullicon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
