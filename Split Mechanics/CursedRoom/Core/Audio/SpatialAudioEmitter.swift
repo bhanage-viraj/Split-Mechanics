@@ -25,6 +25,14 @@ enum SpatialAudioEmitter {
         let attachedEmitter: Entity?
         let controller: AudioPlaybackController
 
+        func pause() {
+            controller.pause()
+        }
+
+        func resume() {
+            controller.play()
+        }
+
         func stop(in scene: RealityKit.Scene) {
             controller.stop()
             if let anchor {

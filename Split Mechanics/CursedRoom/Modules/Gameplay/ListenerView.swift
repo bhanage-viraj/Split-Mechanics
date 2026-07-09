@@ -18,9 +18,11 @@ struct ListenerView: View {
         ZStack {
             vignette
 
+#if false // Phase 8B — frequency scanner cut for demo
             if presenter.showFrequencyScanner && !showRolePopup {
                 scannerCard
             }
+#endif
 
             if showRolePopup {
                 RoleRevealPopup(
@@ -31,12 +33,15 @@ struct ListenerView: View {
             }
         }
         .ignoresSafeArea()
+#if false // Phase 8B — frequency scanner cut for demo
         .onReceive(Timer.publish(every: 0.18, on: .main, in: .common).autoconnect()) { _ in
             guard presenter.showFrequencyScanner else { return }
             signalBarHeights = signalBarHeights.map { _ in CGFloat.random(in: 0.08...1.0) }
         }
+#endif
     }
 
+#if false // Phase 8B — frequency scanner cut for demo
     private var scannerCard: some View {
         VStack(spacing: 12) {
             HStack {
@@ -102,6 +107,7 @@ struct ListenerView: View {
         .padding(.bottom, 36)
         .frame(maxHeight: .infinity, alignment: .bottom)
     }
+#endif
 
     private var vignette: some View {
         RadialGradient(
