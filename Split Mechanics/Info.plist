@@ -4,16 +4,10 @@
 <dict>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_arcurse._tcp</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>This app needs local network access to connect two devices for a co-op AR experience.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Camera access is required to scan your room with LiDAR for the AR experience.</string>
 	<key>SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD</key>
 	<false/>
 	<key>UILaunchScreen</key>

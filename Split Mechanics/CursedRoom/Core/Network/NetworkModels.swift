@@ -43,6 +43,7 @@ struct NetworkEvent: Codable, Sendable {
         case clueCode = "clue_code"
         case requestBloodTrail = "request_blood_trail"
         case sealCollected = "seal_collected"
+        case firstSealTapped = "first_seal_tapped"
         case frequencyMatched = "frequency_matched"
         case seal2Collected = "seal_2_collected"
         case coinTrailSpawn = "coin_trail_spawn"
@@ -113,6 +114,11 @@ struct NetworkEvent: Codable, Sendable {
     /// Either player → the other: first seal collected, update UI state (Phase 7C).
     static func sealCollected(sealNumber: Int) -> NetworkEvent {
         return NetworkEvent(eventType: EventType.sealCollected.rawValue, payload: "\(sealNumber)")
+    }
+
+    /// Seer → the other device: first seal was tapped, end the demo.
+    static func firstSealTapped() -> NetworkEvent {
+        NetworkEvent(eventType: EventType.firstSealTapped.rawValue, payload: nil)
     }
 
     /// Listener → Seer: frequency scanner matched the target (Phase 8A).

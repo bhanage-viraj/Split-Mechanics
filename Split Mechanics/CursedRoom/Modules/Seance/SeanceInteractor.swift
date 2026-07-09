@@ -95,6 +95,7 @@ final class SeanceInteractor {
     private func activateCurse() {
         guard !didRouteToPhase5 else { return }
         didRouteToPhase5 = true
+        GameSoundtrack.shared.playCurseStart()
         arService.removeDoll()
         router?.routeToPhase5()
     }

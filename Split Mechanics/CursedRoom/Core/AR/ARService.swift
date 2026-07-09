@@ -64,11 +64,17 @@ final class ARService: NSObject, ObservableObject {
     /// Emits when the Seer taps the blood pool entity.
     let bloodPoolTapped = PassthroughSubject<Void, Never>()
 
+    /// Emits when the Seer taps the revealed first seal (demo end trigger).
+    let firstSealTapped = PassthroughSubject<Void, Never>()
+
     /// Emits the blood pool spawn transform so the interactor can expose it for validation.
     @Published private(set) var bloodPoolWorldPosition: simd_float3?
 
     /// Emits when the first seal has been revealed (blood pool replaced).
     @Published private(set) var isFirstSealRevealed = false
+
+    /// `true` once the Seer taps the seal and can drag / pinch the 3D model.
+    @Published private(set) var isFirstSealManipulable = false
 
     // MARK: - Phase 8A Events
 
@@ -110,11 +116,17 @@ final class ARService: NSObject, ObservableObject {
     private var letterAudioHandle: SpatialAudioEmitter.Handle?
     private var pendingLetterAnchor: ARAnchor?
     private var pendingLetterTransform: simd_float4x4?
+    private var hasConfiguredLetterTap = false
 
     // MARK: - Phase 7 Private State
 
     private var bloodPoolAnchorEntity: AnchorEntity?
     private var footstepsAnchorEntity: AnchorEntity?
+    private var firstSealAnchorEntity: AnchorEntity?
+    private var firstSealInteractiveEntity: Entity?
+    private var firstSealFloatTask: Task<Void, Never>?
+    private var hasConfiguredFirstSealGestures = false
+    private var didEmitFirstSealTap = false
     private var whisperAudioHandle: SpatialAudioEmitter.Handle?
     private var hasSpawnedBloodTrail = false
     private var hasConfiguredBloodPoolTap = false
@@ -141,8 +153,11 @@ final class ARService: NSObject, ObservableObject {
 
     private static let letterAnchorName = "cursed_letter_anchor"
     private static let letterEntityName = "cursed_letter_entity"
-    private static let letterAudioName = "BGM"
-    private static let letterAudioExtension = "mp3"
+    private static let letterTapVolumeName = "letter_tap_volume"
+    private static let letterTapProximityMeters: Float = 2.5
+    private static let letterTapScreenRadius: CGFloat = 150
+    private static let letterAudioName = "chants"
+    private static let letterAudioExtension = "wav"
     private static let letterAudioSubdirectory = "Sounds"
 
     private static let minimumWallExtent: Float = 0.25
@@ -155,7 +170,7 @@ final class ARService: NSObject, ObservableObject {
     private static let bloodPoolWithSealName = "blood_pool_with_seal"
     private static let footstepsAnchorName = "footsteps_anchor"
     private static let whisperEntityName = "whisper_audio_entity"
-    private static let whisperAudioName = "BGM"
+    private static let whisperAudioName = "Riddle"
     private static let whisperAudioExtension = "mp3"
     private static let whisperAudioSubdirectory = "Sounds"
     private static let bloodTrailWalkFraction: Float = 0.40
@@ -165,6 +180,14 @@ final class ARService: NSObject, ObservableObject {
     private static let footprintFloorOffset: Float = 0.006
     private static let bloodPoolTapProximityMeters: Float = 2.2
     private static let bloodPoolTapScreenRadius: CGFloat = 160
+    private static let firstSealModelName = "Hitem3d-1783040331861"
+    private static let firstSealEntityName = "first_seal_entity"
+    private static let firstSealTapVolumeName = "first_seal_tap_volume"
+    private static let firstSealTargetSize: Float = 0.32
+    private static let firstSealFloatHeight: Float = 0.38
+    private static let firstSealBobAmplitude: Float = 0.05
+    private static let firstSealBobSpeed: Float = 1.4
+    private static let firstSealRotateSpeed: Float = 0.35
 
     // MARK: - Phase 6 / 7 Texture Assets (Assets.xcassets)
 
@@ -552,8 +575,21 @@ final class ARService: NSObject, ObservableObject {
 
         statusMessage = role == .listener
             ? String(localized: "Listen… something is calling from the walls.")
-            : String(localized: "Follow your partner. A clue awaits on the wall.")
+            : String(localized: "Tap the hidden letter on the wall.")
         print("📜 [AR] Letter spawned for \(role.rawValue) at \(worldPosition)")
+    }
+
+    func pauseListenerLetterAudio() {
+        letterAudioHandle?.pause()
+    }
+
+    func resumeListenerLetterAudio() {
+        letterAudioHandle?.resume()
+    }
+
+    func stopListenerLetterAudio() {
+        letterAudioHandle?.stop(in: arView.scene)
+        letterAudioHandle = nil
     }
 
     private func attachLetterContent(
@@ -563,8 +599,11 @@ final class ARService: NSObject, ObservableObject {
         switch role {
         case .seer:
             // Seer sees the letter; no spatial audio (they must rely on the Listener).
-            let visual = makeLetterVisual()
+            let letterSize = planeSize(for: Self.letterTextureName, baseWidth: 0.28)
+            let visual = makeLetterVisual(letterSize: letterSize)
+            let tapVolume = makeLetterTapVolume(letterSize: letterSize)
             anchorEntity.addChild(visual)
+            anchorEntity.addChild(tapVolume)
             configureLetterTap()
 
         case .listener:
@@ -918,33 +957,193 @@ final class ARService: NSObject, ObservableObject {
 
     // MARK: - Phase 7C — First Seal Reveal
 
-    /// Removes the blood trail entities (footsteps + blood pool) and the whisper.
-    func removeBloodTrailEntities() {
-        bloodPoolAnchorEntity.map { arView.scene.removeAnchor($0) }
-        bloodPoolAnchorEntity = nil
+    /// Removes footsteps and whisper audio but keeps the blood pool decal in place.
+    private func removeFootstepsAndWhisper() {
         footstepsAnchorEntity.map { arView.scene.removeAnchor($0) }
         footstepsAnchorEntity = nil
         whisperAudioHandle?.stop(in: arView.scene)
         whisperAudioHandle = nil
+        print("🩸 [AR] Footsteps and whisper removed")
+    }
+
+    /// Removes the blood trail entities (footsteps + blood pool) and the whisper.
+    func removeBloodTrailEntities() {
+        removeFootstepsAndWhisper()
+        bloodPoolAnchorEntity.map { arView.scene.removeAnchor($0) }
+        bloodPoolAnchorEntity = nil
         bloodPoolWorldPosition = nil
         hasSpawnedBloodTrail = false
         print("🩸 [AR] Blood trail entities removed")
     }
 
-    /// Replaces the blood pool with a glowing seal placeholder at the same position.
-    func revealFirstSeal(at position: simd_float3) {
-        removeBloodTrailEntities()
-
-        let sealAnchor = AnchorEntity(world: SpatialMath.translation(position))
-        let seal = makeFirstSealEntity()
-        sealAnchor.addChild(seal)
-        arView.scene.addAnchor(sealAnchor)
-        isFirstSealRevealed = true
-        print("✨ [AR] First Seal revealed")
+    private func disableBloodPoolInteraction() {
+        guard let poolAnchor = bloodPoolAnchorEntity else { return }
+        for child in poolAnchor.children {
+            if child.name == Self.bloodPoolTapVolumeName {
+                child.removeFromParent()
+            } else if child.name == Self.bloodPoolEntityName, let pool = child as? ModelEntity {
+                pool.components.remove(InputTargetComponent.self)
+            }
+        }
     }
 
-    /// Creates the first seal using the sealbox texture from the asset catalog.
-    private func makeFirstSealEntity() -> ModelEntity {
+    /// Spawns the first seal USDZ floating above the blood pool at the same position.
+    func revealFirstSeal(at position: simd_float3) {
+        guard !isFirstSealRevealed else { return }
+
+        removeFootstepsAndWhisper()
+        disableBloodPoolInteraction()
+
+        let sealAnchor = AnchorEntity(world: SpatialMath.translation(position))
+        firstSealAnchorEntity = sealAnchor
+        arView.scene.addAnchor(sealAnchor)
+        isFirstSealRevealed = true
+
+        Task { @MainActor in
+            let seal = await self.loadFirstSeal()
+            sealAnchor.addChild(seal)
+            self.firstSealInteractiveEntity = seal
+            self.addFirstSealTapVolume(to: seal)
+            self.configureFirstSealGesturesIfNeeded()
+            self.startFirstSealFloatingAnimation(on: seal)
+            GameSoundtrack.shared.playSealUnlock()
+            print("✨ [AR] First Seal revealed — USDZ floating above blood pool")
+        }
+    }
+
+    private func addFirstSealTapVolume(to seal: Entity) {
+        let hitSize = simd_float3(0.5, 0.5, 0.5)
+        let material = SimpleMaterial(
+            color: .init(red: 0, green: 0, blue: 0, alpha: 0.01),
+            isMetallic: false
+        )
+        let volume = ModelEntity(mesh: .generateBox(size: hitSize), materials: [material])
+        volume.name = Self.firstSealTapVolumeName
+        volume.components.set(InputTargetComponent())
+        volume.components.set(CollisionComponent(shapes: [.generateBox(size: hitSize)]))
+        seal.addChild(volume)
+    }
+
+    private func configureFirstSealGesturesIfNeeded() {
+        guard !hasConfiguredFirstSealGestures else { return }
+        hasConfiguredFirstSealGestures = true
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleFirstSealTap(_:)))
+        arView.addGestureRecognizer(tap)
+
+#if false // Seal drag/pinch play mode — cut for demo; tap ends the game instead
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handleFirstSealPan(_:)))
+        pan.maximumNumberOfTouches = 1
+        arView.addGestureRecognizer(pan)
+
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleFirstSealPinch(_:)))
+        arView.addGestureRecognizer(pinch)
+#endif
+    }
+
+    @objc private func handleFirstSealTap(_ sender: UITapGestureRecognizer) {
+        guard localPlayerRole == .seer, isFirstSealRevealed, !didEmitFirstSealTap else { return }
+        let location = sender.location(in: arView)
+        guard let tapped = arView.entity(at: location), isFirstSeal(tapped) else { return }
+        didEmitFirstSealTap = true
+        firstSealFloatTask?.cancel()
+        firstSealFloatTask = nil
+        print("✨ [AR] First seal tapped by Seer")
+        firstSealTapped.send(())
+    }
+
+#if false // Seal drag/pinch play mode — cut for demo
+    @objc private func handleFirstSealPan(_ sender: UIPanGestureRecognizer) {
+        guard isFirstSealManipulable, let seal = firstSealInteractiveEntity else { return }
+        guard sender.state == .changed else { return }
+
+        let delta = sender.translation(in: arView)
+        let yaw = Float(delta.x) * 0.012
+        let pitch = Float(delta.y) * 0.012
+        seal.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0]) * seal.orientation
+        seal.orientation = simd_quatf(angle: pitch, axis: [1, 0, 0]) * seal.orientation
+        sender.setTranslation(.zero, in: arView)
+    }
+
+    @objc private func handleFirstSealPinch(_ sender: UIPinchGestureRecognizer) {
+        guard isFirstSealManipulable, let seal = firstSealInteractiveEntity else { return }
+        guard sender.state == .changed else { return }
+
+        let factor = Float(sender.scale)
+        let next = seal.scale.x * factor
+        let clamped = min(max(next, 0.25), 2.0)
+        seal.scale = SIMD3(repeating: clamped)
+        sender.scale = 1.0
+    }
+
+    private func enableFirstSealManipulation() {
+        guard !isFirstSealManipulable else { return }
+        isFirstSealManipulable = true
+        firstSealFloatTask?.cancel()
+        firstSealFloatTask = nil
+        print("✨ [AR] First seal manipulation enabled")
+    }
+#endif
+
+    private func isFirstSeal(_ entity: Entity) -> Bool {
+        var current: Entity? = entity
+        while let node = current {
+            if node.name == Self.firstSealEntityName
+                || node.name == Self.firstSealTapVolumeName { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    private func firstSealModelURL() -> URL? {
+        let bundle = Bundle.main
+        return bundle.url(
+            forResource: Self.firstSealModelName,
+            withExtension: "usdz",
+            subdirectory: "Models"
+        ) ?? bundle.url(forResource: Self.firstSealModelName, withExtension: "usdz")
+    }
+
+    private func loadFirstSeal() async -> Entity {
+        guard let url = firstSealModelURL() else {
+            print("✨ [AR] First seal USDZ not found in bundle — using placeholder")
+            return makePlaceholderFirstSeal()
+        }
+
+        do {
+            let model = try await Entity(contentsOf: url)
+            return configureLoadedFirstSeal(model)
+        } catch {
+            print("✨ [AR] Failed to load first seal USDZ: \(error.localizedDescription)")
+            return makePlaceholderFirstSeal()
+        }
+    }
+
+    private func configureLoadedFirstSeal(_ model: Entity) -> Entity {
+        let container = Entity()
+        container.name = Self.firstSealEntityName
+
+        let bounds = model.visualBounds(relativeTo: nil)
+        let maxExtent = max(bounds.extents.x, max(bounds.extents.y, bounds.extents.z))
+        if maxExtent > 0 {
+            let scale = Self.firstSealTargetSize / maxExtent
+            model.scale = simd_float3(repeating: scale)
+        }
+
+        let scaledBounds = model.visualBounds(relativeTo: nil)
+        model.position = -scaledBounds.center
+
+        container.addChild(model)
+        container.generateCollisionShapes(recursive: true)
+        container.components.set(InputTargetComponent())
+        return container
+    }
+
+    /// Flat textured fallback if the USDZ fails to load.
+    private func makePlaceholderFirstSeal() -> Entity {
+        let container = Entity()
+        container.name = Self.firstSealEntityName
+
         let sealSize = planeSize(for: Self.sealTextureName, baseWidth: 0.32)
         let mesh = MeshResource.generatePlane(width: sealSize.width, depth: sealSize.depth)
         let material = loadTexturedMaterial(
@@ -953,23 +1152,44 @@ final class ARService: NSObject, ObservableObject {
         )
         let seal = ModelEntity(mesh: mesh, materials: [material])
         seal.name = Self.bloodPoolWithSealName
-        seal.generateCollisionShapes(recursive: true)
-        seal.components.set(InputTargetComponent())
+        container.addChild(seal)
+        container.generateCollisionShapes(recursive: true)
+        container.components.set(InputTargetComponent())
+        return container
+    }
 
-        Task { @MainActor in
-            let baseScale: Float = 1.0
-            let pulseRange: Float = 0.12
-            let speed: Float = 2.0
-            let startTime = CACurrentMediaTime()
-            while seal.scene != nil {
+    private func startFirstSealFloatingAnimation(on seal: Entity) {
+        let baseY = Self.firstSealFloatHeight
+        let bobAmplitude = Self.firstSealBobAmplitude
+        let bobSpeed = Self.firstSealBobSpeed
+        let rotateSpeed = Self.firstSealRotateSpeed
+        let startTime = CACurrentMediaTime()
+
+        seal.scale = .zero
+        seal.position.y = baseY
+
+        firstSealFloatTask?.cancel()
+        firstSealFloatTask = Task { @MainActor in
+            let appearDuration: Double = 0.65
+            let appearStart = CACurrentMediaTime()
+            while CACurrentMediaTime() - appearStart < appearDuration {
+                if Task.isCancelled || self.isFirstSealManipulable { return }
+                let progress = (CACurrentMediaTime() - appearStart) / appearDuration
+                let eased = Float(1 - pow(1 - progress, 3))
+                seal.scale = simd_float3(repeating: eased)
+                try? await Task.sleep(nanoseconds: 16_000_000)
+            }
+            seal.scale = .one
+
+            while seal.scene != nil && !self.isFirstSealManipulable && !self.didEmitFirstSealTap {
+                if Task.isCancelled { return }
                 let elapsed = CACurrentMediaTime() - startTime
-                let s = baseScale + pulseRange * sinf(Float(elapsed) * speed)
-                seal.scale = SIMD3<Float>(repeating: s)
+                let bob = bobAmplitude * sinf(Float(elapsed) * bobSpeed)
+                seal.position.y = baseY + bob
+                seal.orientation = simd_quatf(angle: Float(elapsed) * rotateSpeed, axis: [0, 1, 0])
                 try? await Task.sleep(nanoseconds: 16_000_000)
             }
         }
-
-        return seal
     }
 
     // MARK: - Phase 8A — Gold Coins, Stone Slab & Frequency Clue
@@ -1436,8 +1656,7 @@ final class ARService: NSObject, ObservableObject {
         }
     }
 
-    private func makeLetterVisual() -> ModelEntity {
-        let letterSize = planeSize(for: Self.letterTextureName, baseWidth: 0.28)
+    private func makeLetterVisual(letterSize: (width: Float, depth: Float)) -> ModelEntity {
         let mesh = MeshResource.generatePlane(width: letterSize.width, depth: letterSize.depth)
         let material = loadDecalMaterial(
             named: Self.letterTextureName,
@@ -1450,18 +1669,73 @@ final class ARService: NSObject, ObservableObject {
         return letter
     }
 
+    /// Invisible volume in front of the letter so taps are not swallowed by the LiDAR wall mesh.
+    private func makeLetterTapVolume(letterSize: (width: Float, depth: Float)) -> ModelEntity {
+        let hitDepth: Float = 0.45
+        let padding: Float = 1.35
+        let size = simd_float3(letterSize.width * padding, letterSize.depth * padding, hitDepth)
+        let material = SimpleMaterial(
+            color: .init(red: 0, green: 0, blue: 0, alpha: 0.01),
+            isMetallic: false
+        )
+
+        let volume = ModelEntity(
+            mesh: .generateBox(size: size),
+            materials: [material]
+        )
+        volume.name = Self.letterTapVolumeName
+        volume.position.z = hitDepth * 0.5
+        volume.components.set(InputTargetComponent())
+        volume.components.set(CollisionComponent(shapes: [.generateBox(size: size)]))
+        return volume
+    }
+
     private func configureLetterTap() {
+        guard !hasConfiguredLetterTap else { return }
+        hasConfiguredLetterTap = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleLetterTap(_:)))
         arView.addGestureRecognizer(tap)
     }
 
     @objc private func handleLetterTap(_ sender: UITapGestureRecognizer) {
+        guard localPlayerRole == .seer, isLetterSpawned else { return }
         let location = sender.location(in: arView)
-        guard let tapped = arView.entity(at: location),
-              let entity = tapped as? ModelEntity,
-              entity.name == Self.letterEntityName else { return }
+        guard isLetterTap(at: location) else { return }
         print("📜 [AR] Letter tapped by Seer")
         letterTapped.send(())
+    }
+
+    private func isLetterTap(at location: CGPoint) -> Bool {
+        if let tapped = arView.entity(at: location), isLetter(tapped) {
+            return true
+        }
+        return isLetterProximityTap(at: location)
+    }
+
+    private func isLetter(_ entity: Entity) -> Bool {
+        var current: Entity? = entity
+        while let node = current {
+            if node.name == Self.letterEntityName
+                || node.name == Self.letterTapVolumeName { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    /// Fallback when the reconstructed wall mesh wins the hit test instead of the letter decal.
+    private func isLetterProximityTap(at location: CGPoint) -> Bool {
+        guard let letterPosition = letterWorldPosition,
+              let frame = arView.session.currentFrame else { return false }
+
+        let cameraPosition = SpatialMath.cameraPosition(from: frame)
+        guard SpatialMath.euclideanDistance(cameraPosition, letterPosition) <= Self.letterTapProximityMeters else {
+            return false
+        }
+
+        guard let projected = arView.project(letterPosition) else { return false }
+        let dx = projected.x - location.x
+        let dy = projected.y - location.y
+        return (dx * dx + dy * dy).squareRoot() <= Self.letterTapScreenRadius
     }
 
     // MARK: - Textured AR Billboards

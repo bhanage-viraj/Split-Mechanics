@@ -37,8 +37,8 @@ final class GameplayPresenter: ObservableObject {
     @Published private(set) var signalClarity: Double = 0.0
     @Published private(set) var frequencyDelta: Double = 0.0
 
-    // Phase 7C — keypad digit entry
-    @Published private(set) var enteredDigits: [String] = []
+    // Phase 7C — riddle answer entry
+    @Published var enteredAnswer: String = ""
 
     private let interactor: GameplayInteractor
     var cancellables = Set<AnyCancellable>()
@@ -76,6 +76,7 @@ final class GameplayPresenter: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.showLetterSheet = true
+                self?.interactor.onLetterSheetPresented()
             }
             .store(in: &cancellables)
 
@@ -93,7 +94,7 @@ final class GameplayPresenter: ObservableObject {
             .sink { [weak self] msg in
                 self?.keypadErrorMessage = msg
                 if msg != nil {
-                    self?.clearEnteredDigits()
+                    self?.enteredAnswer = ""
                 }
             }
             .store(in: &cancellables)
@@ -162,6 +163,7 @@ final class GameplayPresenter: ObservableObject {
     /// Dismiss the letter sheet and advance to Phase 7 (footsteps + blood pool).
     func dismissLetterAndBeginPhase7() {
         showLetterSheet = false
+        interactor.onLetterSheetDismissed()
         interactor.beginBloodTrailPhase()
     }
 
@@ -174,20 +176,13 @@ final class GameplayPresenter: ObservableObject {
     }
 
     var isFrequencyLocked: Bool { isFrequencyMatchResolved }
+#if false // Phase 8B — frequency scanner cut for demo
     var showFrequencyScanner: Bool { sealsCollected > 0 }
+#else
+    var showFrequencyScanner: Bool { false }
+#endif
 
-    // MARK: - Keypad Helpers
-
-    func appendDigit(_ digit: String) {
-        guard enteredDigits.count < 3 else { return }
-        enteredDigits.append(digit)
-    }
-
-    func submitCurrentCode() {
-        submitCode(enteredDigits.joined())
-    }
-
-    func clearEnteredDigits() {
-        enteredDigits = []
+    func submitCurrentAnswer() {
+        submitCode(enteredAnswer)
     }
 }

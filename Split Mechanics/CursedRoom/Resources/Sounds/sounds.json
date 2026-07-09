@@ -73,9 +73,34 @@
             "loop": false
         },
         "letter_whisper": {
-            "file": "BGM.mp3",
+            "file": "chants.wav",
             "loop": true,
             "spatial": true
+        },
+        "blood_pool_riddle": {
+            "file": "Riddle.mp3",
+            "loop": true,
+            "spatial": true
+        },
+        "game_entrance": {
+            "file": "enterance.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "curse_start": {
+            "file": "after curse.wav",
+            "loop": false,
+            "spatial": false
+        },
+        "seer_wind": {
+            "file": "wind.wav",
+            "loop": true,
+            "spatial": false
+        },
+        "letter_heartbeat": {
+            "file": "Heartbeat.wav",
+            "loop": true,
+            "spatial": false
         }
     },
     "audio_groups": {

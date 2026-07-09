@@ -29,7 +29,7 @@ final class GameplayInteractor: ObservableObject {
     private let whisperHaptics = LetterProximityHaptics()
 
     // Phase 7
-    private let clueCode: String = "427"
+    private let clueCode: String = "Hastar"
     @Published private(set) var sealsCollected: Int = 0
     @Published private(set) var showCodeKeypad = false
     @Published private(set) var keypadErrorMessage: String?
@@ -39,6 +39,8 @@ final class GameplayInteractor: ObservableObject {
     private var isProximityLoopActive = false
     private var isBloodTrailPhaseActive = false
     private var didSpawnBloodTrail = false
+    private var didEndGameAfterFirstSeal = false
+    private var curseStartFinished = false
 
     // Phase 8A
     private let targetFrequency: Double = 440.0
@@ -77,6 +79,7 @@ final class GameplayInteractor: ObservableObject {
     func start() {
         bindCollaboration()
         bindRoleAssignment()
+        bindCurseStartAudio()
         bindLetterSpawn()
         bindLetterNetworkSync()
         bindLetterProximityLoop()
@@ -85,13 +88,19 @@ final class GameplayInteractor: ObservableObject {
         bindListenerWhisperHints()
         bindClueCodeFromHost()
         bindBloodTrailSync()
+#if false // Phase 8+ — cut for demo; game ends after first seal
         bindFrequencyClueTap()
         bindFrequencyMatched()
         bindSeal2Tap()
         bindCoinTrailNetworkSync()
         bindFrequencyEmitterSync()
         bindFrequencyScanner()
+#endif
         assignRolesIfNeeded()
+        if GameSoundtrack.shared.didFinishCurseStart {
+            curseStartFinished = true
+            startSeerWindIfNeeded()
+        }
         if playerRole != .unassigned {
             beginLetterHunt()
         }
@@ -116,6 +125,7 @@ final class GameplayInteractor: ObservableObject {
             didAssignRoles = true
             networkService.send(.roleAssignment(hostIsSeer: true))
             print("🎭 [Gameplay] Host assigned — local role: seer")
+            startSeerWindIfNeeded()
         } else if let event = networkService.latestEvent(ofType: .roleAssignment) {
             applyGuestRole(from: event.payload)
         }
@@ -146,6 +156,37 @@ final class GameplayInteractor: ObservableObject {
 
         didAssignRoles = true
         print("🎭 [Gameplay] Guest assigned — local role: \(playerRole.rawValue)")
+        startSeerWindIfNeeded()
+    }
+
+    private func bindCurseStartAudio() {
+        NotificationCenter.default.publisher(for: .gameCurseStartFinished)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.curseStartFinished = true
+                self.startSeerWindIfNeeded()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Flow chart: Seer hears wind after curse start finishes.
+    private func startSeerWindIfNeeded() {
+        guard playerRole == .seer, curseStartFinished else { return }
+        GameSoundtrack.shared.playWindForSeer()
+    }
+
+    func onLetterSheetPresented() {
+        GameSoundtrack.shared.beginLetterReading()
+        if playerRole == .listener {
+            arService.pauseListenerLetterAudio()
+        }
+    }
+
+    func onLetterSheetDismissed() {
+        GameSoundtrack.shared.endLetterReading()
+        if playerRole == .listener {
+            arService.resumeListenerLetterAudio()
+        }
     }
 
     // MARK: - Phase 6B — Letter Spawn
@@ -292,36 +333,42 @@ final class GameplayInteractor: ObservableObject {
         print("🔢 [Gameplay] Seer tapped blood pool — showing keypad")
     }
 
-    /// Called by the view when the Seer submits a 3-digit code.
+    /// Called by the view when the Seer submits the riddle answer.
     func submitCode(_ code: String) {
         guard isBloodTrailPhaseActive else { return }
 
-        if code == clueCode {
+        let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.compare(clueCode, options: .caseInsensitive) == .orderedSame {
             keypadErrorMessage = nil
             showCodeKeypad = false
             isBloodTrailPhaseActive = false
-            print("🔓 [Gameplay] Correct code entered — revealing First Seal")
+            print("🔓 [Gameplay] Correct answer entered — ending demo")
 
-            // Reveal the seal in AR.
-            if let position = arService.bloodPoolWorldPosition {
-                arService.revealFirstSeal(at: position)
-            }
-
-            // Update local seal count.
             sealsCollected = 1
-
-            // Notify the other device.
             networkService.send(.sealCollected(sealNumber: 1))
-
-            // Phase 8A — spawn gold-coin trail for the Seer.
-            beginFrequencyPhaseIfNeeded()
-
-            // Stop Listener proximity to letter.
-            stopListenerProximityLoop()
+            endGameAfterFirstSealIfNeeded()
         } else {
-            keypadErrorMessage = String(localized: "Wrong code. Try again.")
-            print("🔒 [Gameplay] Wrong code: \(code)")
+            keypadErrorMessage = String(localized: "Wrong answer. Try again.")
+            print("🔒 [Gameplay] Wrong answer: \(code)")
         }
+    }
+
+    private func bindFirstSealTap() {
+        arService.firstSealTapped
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                guard let self, self.playerRole == .seer else { return }
+                self.networkService.send(.firstSealTapped())
+                self.endGameAfterFirstSealIfNeeded()
+            }
+            .store(in: &cancellables)
+
+        networkService.eventPublisher
+            .filter { $0.eventType == NetworkEvent.EventType.firstSealTapped.rawValue }
+            .sink { [weak self] _ in
+                self?.endGameAfterFirstSealIfNeeded()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Phase 7C — Seal Events (cross-device sync)
@@ -334,8 +381,7 @@ final class GameplayInteractor: ObservableObject {
                 self.sealsCollected = max(self.sealsCollected, count)
                 print("✨ [Gameplay] Received seal update — total: \(self.sealsCollected)")
                 if count >= 1 {
-                    self.revealFirstSealIfNeeded()
-                    self.beginFrequencyPhaseIfNeeded()
+                    self.endGameAfterFirstSealIfNeeded()
                 }
             }
             .store(in: &cancellables)
@@ -355,6 +401,18 @@ final class GameplayInteractor: ObservableObject {
         guard !arService.isFirstSealRevealed,
               let position = arService.bloodPoolWorldPosition else { return }
         arService.revealFirstSeal(at: position)
+    }
+
+    /// Demo ends once the blood pool puzzle is solved on either device.
+    private func endGameAfterFirstSealIfNeeded() {
+        guard !didEndGameAfterFirstSeal else { return }
+        didEndGameAfterFirstSeal = true
+        stopListenerProximityLoop()
+        stopWhisperProximityLoop()
+        GameSoundtrack.shared.stopWind()
+        GameSoundtrack.shared.endLetterReading()
+        GameSoundtrack.shared.playSealUnlock()
+        router?.endGameAfterFirstSeal()
     }
 
     // MARK: - Phase 7B — Listener Whisper Proximity Hints
@@ -433,6 +491,7 @@ final class GameplayInteractor: ObservableObject {
         }
 
         didSpawnBloodTrail = true
+        beginSplitInvestigationAudioIfNeeded()
         networkService.send(.bloodTrailSpawn(destination: result.destination, bendSide: result.bendSide))
         networkService.send(.clueCode(code: clueCode))
         print("🔢 [Gameplay] Host sent clue code and blood trail sync")
@@ -447,7 +506,14 @@ final class GameplayInteractor: ObservableObject {
         }
 
         didSpawnBloodTrail = true
+        beginSplitInvestigationAudioIfNeeded()
         print("🩸 [Gameplay] Synced blood trail spawned at \(destination)")
+    }
+
+    /// Flow chart: Listener switches from letter chants to blood-pool riddle audio.
+    private func beginSplitInvestigationAudioIfNeeded() {
+        guard playerRole == .listener else { return }
+        arService.stopListenerLetterAudio()
     }
 
     private func bindBloodTrailSync() {

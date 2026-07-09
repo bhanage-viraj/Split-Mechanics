@@ -23,6 +23,7 @@ final class AppCoordinator: ObservableObject {
         case seance       // Phase 4 — shared AR, worlds merge, doll appears
         case curseBegins  // Phase 5 — black transition after the doll is touched
         case gameplay     // Phase 6 — role assignment & investigation
+        case gameComplete // Demo ends after blood pool puzzle is solved
     }
 
     @Published var currentScreen: Screen = .intro
@@ -75,6 +76,7 @@ final class AppCoordinator: ObservableObject {
         bindLobbyNavigation()
         bindScanningNavigation()
         bindSeanceNavigation()
+        bindGameplayNavigation()
     }
 
     // MARK: - Lobby Navigation
@@ -89,6 +91,7 @@ final class AppCoordinator: ObservableObject {
                 guard let self else { return }
                 if isDisconnected, self.currentScreen != .intro, self.hasPlayedIntro {
                     self.releaseScanningStack()
+                    GameSoundtrack.shared.stopAll()
                     self.transition(to: .lobby)
                 }
             }
@@ -169,6 +172,19 @@ final class AppCoordinator: ObservableObject {
             .store(in: &cancellables)
     }
 
+    // MARK: - Gameplay → Game Complete (blood pool puzzle solved)
+
+    private func bindGameplayNavigation() {
+        gameplayRouter.$shouldEndGame
+            .removeDuplicates()
+            .filter { $0 }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.transition(to: .gameComplete)
+            }
+            .store(in: &cancellables)
+    }
+
     // MARK: - Screen Factory
 
     @ViewBuilder
@@ -222,10 +238,14 @@ final class AppCoordinator: ObservableObject {
                     transition(to: .seance)
                 },
                 onBack: { [self] in
+                    GameSoundtrack.shared.stopAll()
                     networkService.disconnect()
                     transition(to: .lobby)
                 }
             )
+            .onAppear {
+                GameSoundtrack.shared.playEntrance()
+            }
         case .seance:
             // Both devices run the collaborative AR view.
             SeanceView(presenter: seancePresenter)
@@ -235,6 +255,16 @@ final class AppCoordinator: ObservableObject {
             }
         case .gameplay:
             GameplayView(presenter: gameplayPresenter)
+        case .gameComplete:
+            GameCompleteView { [self] in
+                GameSoundtrack.shared.stopAll()
+                networkService.disconnect()
+                hasPlayedIntro = true
+                transition(to: .intro)
+            }
+            .onAppear {
+                GameSoundtrack.shared.stopWind()
+            }
         }
     }
 
