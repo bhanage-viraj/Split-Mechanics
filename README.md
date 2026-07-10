@@ -1,4 +1,4 @@
-# The Cursed Room
+# REVENANTS
 ### A Technical Design Document, Told as a Story
 
 > **Version 1.1** · iOS 18+ · Swift 6 · VIPER + SwiftUI
